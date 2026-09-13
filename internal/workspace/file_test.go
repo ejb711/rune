@@ -1798,14 +1798,89 @@ func TestFileFlushPublishesLastFlushBeforeRename(t *testing.T) {
 // transparently.
 type renameHookScheme struct {
 	schemeapi.Scheme
-	onRename func(oldpath, newpath string)
+	onRename    func(oldpath, newpath string)
+	afterRename func(oldpath, newpath string) error
 }
 
 func (s *renameHookScheme) Rename(oldpath, newpath string) error {
 	if s.onRename != nil {
 		s.onRename(oldpath, newpath)
 	}
-	return s.Scheme.Rename(oldpath, newpath)
+	if err := s.Scheme.Rename(oldpath, newpath); err != nil {
+		return err
+	}
+	if s.afterRename != nil {
+		return s.afterRename(oldpath, newpath)
+	}
+	return nil
+}
+
+func TestFileFlushPostRenameModification(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		externalEdit bool
+		pendingEdit  bool
+	}{
+		{name: "rename_changes_mtime_only"},
+		{name: "external_edit_before_rename_returns", externalEdit: true},
+		{name: "rename_with_pending_edit", pendingEdit: true},
+		{name: "external_and_pending_edit", externalEdit: true, pendingEdit: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			buf, fileObj := newIntegrationTestCase(t, true)
+			workspaceURI, err := makeLocalURI(filepath.Dir(fileObj.Name()))
+			require.NoError(t, err)
+			inner, err := newTestFileScheme(workspaceURI)
+			require.NoError(t, err)
+			hook := &renameHookScheme{Scheme: inner}
+			f, err := newFile(hook, fileObj.Name(), buf, "", false, inlineSchedule)
+			require.NoError(t, err)
+			defer f.Close()
+			buf.WriteString("editor change")
+			saved := buf.String()
+			modified := time.Date(2040, time.January, 2, 3, 4, 5, 0, time.UTC)
+			var duringRename time.Time
+			hook.afterRename = func(_, path string) error {
+				if tc.pendingEdit {
+					buf.WriteString("pending user edit")
+				}
+				if tc.externalEdit {
+					if err := os.WriteFile(path, []byte("external change"), 0600); err != nil {
+						return err
+					}
+				}
+				if err := os.Chtimes(path, modified, modified); err != nil {
+					return err
+				}
+				duringRename = f.LastFlush()
+				return nil
+			}
+			require.NoError(t, awaitFlushErr(f.Flush(context.Background())))
+			info, err := os.Stat(fileObj.Name())
+			require.NoError(t, err)
+			require.True(t, info.ModTime().Equal(modified))
+			data, err := os.ReadFile(fileObj.Name())
+			require.NoError(t, err)
+			wantBuffer := saved
+			if tc.pendingEdit {
+				wantBuffer += "pending user edit"
+			}
+			assert.Equal(t, wantBuffer, buf.String())
+			assert.False(t, duringRename.Equal(modified))
+			if tc.externalEdit {
+				assert.Equal(t, "external change", string(data))
+				assert.False(t, f.LastFlush().Equal(info.ModTime()),
+					"external edit must not be published as our saved timestamp")
+				assert.True(t, f.infoModTime.Equal(duringRename))
+				buf.WriteString("pending edit")
+				require.ErrorIs(t, awaitFlushErr(f.Flush(context.Background())), workspaceapi.ErrStaleData)
+			} else {
+				assert.Equal(t, saved+"\n", string(data))
+				assert.True(t, f.LastFlush().Equal(info.ModTime()),
+					"rename-only mtime change must still be recognized as our save")
+			}
+		})
+	}
 }
 
 // statHookScheme wraps a schemeapi.Scheme so a test can observe Stat
