@@ -2144,14 +2144,9 @@ workspace:
 `), 0o666))
 
 	mu := new(sync.Mutex)
-	scheduleNextTick := func(fn func()) bool {
-		go debug.CapturePanicReport(func() {
-			mu.Lock()
-			defer mu.Unlock()
-			fn()
-		})
-		return true
-	}
+	scheduleNextTick, drainSchedule := newTestScheduler(t, mu)
+	startupCallback := make(chan struct{})
+	require.True(t, scheduleNextTick(func() { close(startupCallback) }))
 
 	i, err := New(dir, configPath, dataDir, pkgtrust.NewStore(dataDir, nil), newTestStorage(t, dataDir),
 		WithLocker(mu),
@@ -2162,9 +2157,20 @@ workspace:
 	t.Cleanup(func() { _ = i.Close() })
 
 	root := i.Ready()
+	select {
+	case <-startupCallback:
+		t.Fatal("scheduled callbacks must wait until IDE startup finishes")
+	default:
+	}
 	mu.Lock()
 	root.Resize(120, 40)
 	mu.Unlock()
+	drainSchedule()
+	select {
+	case <-startupCallback:
+	default:
+		t.Fatal("scheduled callbacks must run once the event loop starts")
+	}
 	i.WaitWorkspaces()
 
 	sendKeys := func(t *testing.T, seq string) {

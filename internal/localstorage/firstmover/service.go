@@ -516,6 +516,8 @@ func (s *Service) follow(ctx context.Context, addr net.Addr) (bool, error) {
 		return true, err
 	}
 
+	defer func() { _ = conn.Close() }()
+
 	client := new(storagerpcclient.Client)
 	client.Init(conn, s.cfg.Marshaler)
 
@@ -550,7 +552,10 @@ loop:
 			s.monitorLeader(ctx, conn)
 			s.log(log.DebugLevel, "Successfully connected to leader. Unlocking API...")
 			break loop
-		case connectivity.Connecting, connectivity.Idle:
+		case connectivity.Idle:
+			conn.Connect()
+			fallthrough
+		case connectivity.Connecting:
 			didChange := conn.WaitForStateChange(ctx, state)
 			if !didChange {
 				s.log(log.TraceLevel, "Stopped monitoring for state changes. ctx is canceled")
@@ -576,7 +581,12 @@ loop:
 		state := conn.GetState()
 		s.log(log.TraceLevel, "Monitoring for state changes. Current: %s", state)
 		switch state {
-		case connectivity.Ready, connectivity.Idle, connectivity.Connecting:
+		case connectivity.Idle:
+			// A lost leader can leave gRPC idle; without a new RPC it will
+			// never reconnect and cannot trigger the failure timeout below.
+			conn.Connect()
+			fallthrough
+		case connectivity.Ready, connectivity.Connecting:
 			if !conn.WaitForStateChange(ctx, state) {
 				s.log(log.TraceLevel, "Stopped monitoring for state changes. ctx is canceled")
 				return false, nil

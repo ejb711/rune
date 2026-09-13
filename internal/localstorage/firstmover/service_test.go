@@ -485,16 +485,28 @@ func TestPartitionRoutesThroughRootLeader(t *testing.T) {
 	assert.Equal(t, "via-leader", got.A)
 }
 
+func TestPartitionWorksAfterLeaderFailoverWithoutGoodbye(t *testing.T) {
+	testHookSuppressBye.Store(true)
+	t.Cleanup(func() { testHookSuppressBye.Store(false) })
+	testPartitionWorksAfterLeaderFailover(t)
+}
+
 // TestPartitionWorksAfterLeaderFailover verifies that values written
 // to a partition on the original leader remain readable from the
 // same partition name after the follower takes leadership.
 func TestPartitionWorksAfterLeaderFailover(t *testing.T) {
+	testPartitionWorksAfterLeaderFailover(t)
+}
+
+func testPartitionWorksAfterLeaderFailover(t *testing.T) {
+	t.Helper()
 	lockFile := makeTempLockFile(t)
 	cfg := testConfig()
 	shared := storagestub.NewInMemoryService()
 	factory := factoryFor(shared)
 
 	leader := New(factory, lockFile, cfg)
+	t.Cleanup(func() { _ = leader.Close() })
 	leaderPart, err := leader.Partition("p")
 	require.NoError(t, err)
 	require.NoError(t, leaderPart.Set(context.Background(),

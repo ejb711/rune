@@ -75,6 +75,12 @@ type flusher struct {
 	mu       sync.Mutex
 	idle     sync.Cond
 	inflight int
+	pending  map[string]*pendingFileOps
+}
+
+type pendingFileOps struct {
+	count int
+	after []func()
 }
 
 // flusherOp tags the kind of async op for notification formatting in
@@ -99,6 +105,7 @@ func newFlusher(
 		comp:          comp,
 		notifications: notifications,
 		sched:         sched,
+		pending:       make(map[string]*pendingFileOps),
 	}
 	f.idle.L = &f.mu
 	return f
@@ -196,6 +203,38 @@ func (f *flusher) wait() {
 	}
 }
 
+// afterPending defers fn until this file's completion callbacks have run on
+// the event loop, where both its saved timestamp and dirty state are settled.
+func (f *flusher) afterPending(uri workspaceapi.URI, fn func()) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	op := f.pending[uri.String()]
+	if op == nil {
+		return false
+	}
+	op.after = append(op.after, fn)
+	return true
+}
+
+func (f *flusher) finishPending(uri workspaceapi.URI, dispatch bool) {
+	f.mu.Lock()
+	op := f.pending[uri.String()]
+	if !dispatch {
+		// A rejected scheduler cannot safely run UI callbacks on this worker.
+		op.after = nil
+	}
+	op.count--
+	if op.count > 0 {
+		f.mu.Unlock()
+		return
+	}
+	delete(f.pending, uri.String())
+	f.mu.Unlock()
+	for _, fn := range op.after {
+		fn()
+	}
+}
+
 // startWith adapts a (ctx, handler) -> chan method to the
 // (ctx) -> chan signature startAsync expects, partially applying h.
 func (f *flusher) startWith(
@@ -223,6 +262,12 @@ func (f *flusher) startAsync(
 	}
 	f.mu.Lock()
 	f.inflight++
+	op := f.pending[uri.String()]
+	if op == nil {
+		op = new(pendingFileOps)
+		f.pending[uri.String()] = op
+	}
+	op.count++
 	f.mu.Unlock()
 	go debug.CapturePanicReport(func() {
 		defer f.done()
@@ -230,7 +275,9 @@ func (f *flusher) startAsync(
 		// sched must dispatch onto the UI goroutine so
 		// notifications and onSuccess hooks happen on a single
 		// thread.
-		f.sched(func() { f.onDone(uri, kind, ferr, onSuccess) })
+		if !f.sched(func() { f.onDone(uri, kind, ferr, onSuccess) }) {
+			f.finishPending(uri, false)
+		}
 	})
 	return nil
 }
@@ -247,6 +294,7 @@ func (f *flusher) done() {
 func (f *flusher) onDone(
 	uri workspaceapi.URI, kind flusherOp, err error, onSuccess func(),
 ) {
+	defer f.finishPending(uri, true)
 	if err == nil {
 		if onSuccess != nil {
 			onSuccess()

@@ -18,6 +18,7 @@ package ide
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -580,7 +581,8 @@ func TestHandleFSChange_NoPromptForSecondWriteDuringReload(t *testing.T) {
 	var mu sync.Mutex
 	ignores := vctrl.NopMatcher(false)
 
-	x := newExForEventTesting(t, &mu)
+	harness := newEventTestEx(t, &mu)
+	x := harness.ex
 	testURI, err := x.workspace.URI("a")
 	require.NoError(t, err)
 
@@ -634,7 +636,129 @@ func TestHandleFSChange_NoPromptForSecondWriteDuringReload(t *testing.T) {
 	// Final sanity: drain everything and confirm the buffer
 	// reflects the latest disk content.
 	x.waitInflight()
+	harness.scheduler.Flush(&mu)
+	x.waitInflight()
+	harness.scheduler.Flush(&mu)
 	assertBufferContent(t, x, testURI, "xyz")
+}
+
+type pausedCreateScheme struct {
+	schemeapi.Scheme
+	path    string
+	touched chan struct{}
+	release chan struct{}
+}
+
+func (s *pausedCreateScheme) OpenFile(path string, flag int, mode os.FileMode) (workspaceapi.File, error) {
+	f, err := s.Scheme.OpenFile(path, flag, mode)
+	if err == nil && path == s.path && flag&os.O_EXCL != 0 {
+		close(s.touched)
+		<-s.release
+	}
+	return f, err
+}
+
+// The test delivers watcher events explicitly at the save's intermediate states.
+func (s *pausedCreateScheme) Watch(string, chan<- schemeapi.EventInfo, ...schemeapi.Event) (int, error) {
+	return 0, nil
+}
+
+func (s *pausedCreateScheme) StopWatch(int) error { return nil }
+
+func TestHandleFSChangeDuringOwnSave(t *testing.T) {
+	t.Run("own save preserves search and commands", func(t *testing.T) {
+		testFSChangeDuringOwnSave(t, false)
+	})
+	t.Run("external change is rechecked after save", func(t *testing.T) {
+		testFSChangeDuringOwnSave(t, true)
+	})
+}
+
+func testFSChangeDuringOwnSave(t *testing.T, externalChange bool) {
+	t.Helper()
+	cfg := defaultConfigWithWrap(false)
+	mu, sched, drain := buildTestSchedulerForCfg(t, &cfg)
+	manager := workspace.NewManager(config.NopConfig(), sched)
+	uri, err := workspaceapi.ParseURI("memory:///project")
+	require.NoError(t, err)
+	s := &pausedCreateScheme{
+		path: "dakar.md", touched: make(chan struct{}), release: make(chan struct{}),
+	}
+	require.NoError(t, manager.RegisterScheme(workspace.MemoryScheme,
+		func(ctx context.Context, cfg config.Config, root workspaceapi.URI) (schemeapi.Scheme, error) {
+			base, err := workspace.NewMemoryScheme(ctx, cfg, root)
+			if root.Equal(uri) {
+				s.Scheme = base
+				return s, err
+			}
+			return base, err
+		}))
+	m := newTestWorkspaceManagerHandlerWithManager(t, manager, mu, drain, uri, cfg)
+	t.Cleanup(func() { require.NoError(t, m.Close()) })
+	unblock := sync.OnceFunc(func() { close(s.release) })
+	t.Cleanup(unblock)
+	h := newSafeHandler(m)
+	h.Resize(30, 9)
+	h.Handle(term.Event{Type: term.EventKey, Mod: term.ModCtrl, Ch: '\\'})
+	feedLiteral(t, h, "edit dakar.md")
+	h.Handle(term.Event{Type: term.EventKey, Key: term.KeyEnter})
+	feedLiteral(t, h, "igentleman")
+	h.Handle(term.Event{Type: term.EventKey, Key: term.KeyEnter})
+	feedLiteral(t, h, "driver")
+	h.Handle(term.Event{Type: term.EventKey, Key: term.KeyEnter})
+	feedLiteral(t, h, "gentleman")
+	h.Handle(term.Event{Type: term.EventKey, Key: term.KeyEsc})
+
+	x := m.focusEx()
+	file, err := x.workspace.URI("dakar.md")
+	require.NoError(t, err)
+	var externalErr error
+	m.locked(func() {
+		_, tab, ok := x.focusTab()
+		require.True(t, ok)
+		require.NoError(t, x.flusher.flushAndThen(file, tab, false, func() {
+			if !externalChange {
+				return
+			}
+			f, err := s.Scheme.OpenFile(s.path, os.O_WRONLY|os.O_TRUNC, 0o644)
+			if err != nil {
+				externalErr = err
+				return
+			}
+			_, externalErr = f.Write([]byte("external update\n"))
+			externalErr = errors.Join(externalErr, f.Close())
+		}))
+	})
+	select {
+	case <-s.touched:
+	case <-time.After(5 * time.Second):
+		t.Fatal("save did not create the file")
+	}
+	dispatchFilesystemEvent(x, mu, vctrl.NopMatcher(false), testEventInfo{e: schemeapi.Create, u: file})
+	m.locked(func() {
+		focused, _, ok := x.focusTab()
+		require.True(t, ok, "an own-save event must not steal focus with a conflict prompt")
+		require.Equal(t, file, focused)
+	})
+	unblock()
+	m.quiesce()
+	require.NoError(t, externalErr)
+	if externalChange {
+		m.locked(func() {
+			ed, err := x.comp.Editor(file)
+			require.NoError(t, err)
+			require.Equal(t, "external update", term.CellsToString(ed.CellView().RawCells()))
+		})
+		return
+	}
+	feedLiteral(t, h, "/gentleman")
+	h.Handle(term.Event{Type: term.EventKey, Key: term.KeyEnter})
+	m.locked(func() {
+		require.NoError(t, x.dispatchCommand(text.CommandLocationJump, "next", "search"))
+		_, ed, ok := x.handlerInFocus()
+		require.True(t, ok)
+		require.Equal(t, term.Coordinates{Y: 2}, ed.CursorAtScroll())
+	})
 }
 
 func assertFileContent(t *testing.T, x *ex, file workspaceapi.URI, content string) {
@@ -683,6 +807,11 @@ func assertNoPrompt(t *testing.T, x *ex, mu sync.Locker) {
 // dispatchFilesystemEvent) so the async reload worker's buffer
 // mutations cannot race in-flight event handling.
 func newExForEventTesting(t *testing.T, mu sync.Locker) *ex {
+	return newEventTestEx(t, mu).ex
+}
+
+func newEventTestEx(t *testing.T, mu sync.Locker) testEx {
+	t.Helper()
 	ctx := context.Background()
 	opts := []text.Option{
 		text.WithCommandKey(testCommandKey),
@@ -715,7 +844,7 @@ func newExForEventTesting(t *testing.T, mu sync.Locker) *ex {
 		require.NoError(t, fileScheme.Close())
 	})
 
-	return e.ex
+	return e
 }
 
 type testEventInfo struct {

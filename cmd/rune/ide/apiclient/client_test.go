@@ -30,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/unstablebuild/rune-go-sdk/api/storageapi/storagestub"
@@ -377,6 +378,20 @@ func TestClient_Login_PublishesOAuthURL(t *testing.T) {
 // the loopback redirect handler. The browser tab then spins forever on
 // the redirect and login never completes.
 func TestClient_Login_CompletesWhileBrowserOpenerBlocks(t *testing.T) {
+	// Hold the callback after it delivers the code but before net/http
+	// flushes the response, so token exchange wins the shutdown race.
+	redirectRelease := make(chan struct{})
+	logger := log.StandardLogger()
+	oldLevel := logger.GetLevel()
+	oldHooks := logger.ReplaceHooks(make(log.LevelHooks))
+	logger.SetLevel(log.InfoLevel)
+	logger.AddHook(&oauthRedirectCompletionHook{release: redirectRelease})
+	t.Cleanup(func() {
+		close(redirectRelease)
+		logger.ReplaceHooks(oldHooks)
+		logger.SetLevel(oldLevel)
+	})
+
 	srv := completingOAuthServer(t)
 	defer srv.Close()
 
@@ -423,9 +438,11 @@ func TestClient_Login_CompletesWhileBrowserOpenerBlocks(t *testing.T) {
 	browserTab := &http.Client{Timeout: 5 * time.Second}
 	resp, err := browserTab.Get(callbackURL.String())
 	require.NoError(t, err, "loopback redirect must respond while the opener blocks")
-	_, _ = io.Copy(io.Discard, resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err, "loopback redirect must deliver the complete response")
 	require.NoError(t, resp.Body.Close())
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, callbackPageHTML, string(body))
 
 	select {
 	case err := <-session.Done:
@@ -433,6 +450,21 @@ func TestClient_Login_CompletesWhileBrowserOpenerBlocks(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("expected Login to complete after the OAuth redirect")
 	}
+}
+
+type oauthRedirectCompletionHook struct {
+	release <-chan struct{}
+}
+
+func (*oauthRedirectCompletionHook) Levels() []log.Level {
+	return []log.Level{log.InfoLevel}
+}
+
+func (h *oauthRedirectCompletionHook) Fire(entry *log.Entry) error {
+	if entry.Data["class"] == "redirectHandler" && entry.Data["step"] == "success" {
+		<-h.release
+	}
+	return nil
 }
 
 // completingOAuthServer serves an oauth2 config pointing back at itself
