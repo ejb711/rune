@@ -3012,6 +3012,33 @@ Greet the user warmly.
 	}
 }
 
+func TestCommitAttributionInjectedWithoutPersistence(t *testing.T) {
+	svc := &mockService{responses: []mockResponse{stopResponse("hi")}}
+	store := newMockStore()
+	ag := NewAgent(svc, NewRegistry(), noSkills(), store, NoMemory(), Config{
+		SystemPrompt: "test",
+		Attribution:  DefaultAttribution(),
+		Model: llmapi.ModelEntry{
+			Provider: "openai",
+			Name:     "gpt-test",
+		},
+	})
+
+	it := ag.Run(context.Background(), "d", "hello")
+	_ = collectEvents(t, it)
+
+	require.Equal(t, 1, svc.getCallCount())
+	require.GreaterOrEqual(t, len(svc.requests[0].Messages), 3)
+	assert.Contains(t, svc.requests[0].Messages[1].Content,
+		"Co-Authored-By: Rune Agent (openai/gpt-test) <agent@rune.build>")
+
+	d, ok := store.getDialogue("d")
+	require.True(t, ok)
+	for _, msg := range d.Messages {
+		assert.NotContains(t, msg.Content, "Co-Authored-By: Rune Agent")
+	}
+}
+
 func TestSkillsNotInjectedWhenEmpty(t *testing.T) {
 	svc := &mockService{responses: []mockResponse{stopResponse("hi")}}
 	reg := skills.NewRegistry(nopFileSystem{}, dirURI(""), nil, nil)

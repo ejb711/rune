@@ -15,6 +15,8 @@ extensions:
   rune-agent:
     config:
       agents_file: AGENTS.md
+      attribution:
+        commit: 'Co-Authored-By: Rune Agent ({{provider}}/{{model}}) <agent@rune.build>'
       skills:
         - .rune/skills
         - ~/.rune/skills
@@ -28,6 +30,7 @@ extensions:
 | Key | Type | Default | What it does |
 | --- | --- | --- | --- |
 | `agents_file` | string | `AGENTS.md` | Name of the [project instructions](./intro.md#project-instructions) file to discover. The agent walks up from the workspace root looking for files with this name and injects their contents into the system prompt. Set it empty to disable discovery. |
+| `attribution.commit` | string | `Co-Authored-By: Rune Agent ({{provider}}/{{model}}) <agent@rune.build>` | Attribution text Rune Agent is instructed to append to commits it creates. `{{provider}}` and `{{model}}` expand to the resolved model. Set it to an empty string to disable commit attribution. |
 | `skills` | list | the four directories below | Ordered list of [skill directories](./skills.md#skill-directories) to search. Overrides the default set when present. |
 | `max_line_bytes` | integer | `500` | Truncation limit, in bytes, for a single line of `read_file` output. |
 | `max_tool_output_bytes` | integer | `40000` | Truncation limit, in bytes, for a single tool's output before it is trimmed in the transcript. |

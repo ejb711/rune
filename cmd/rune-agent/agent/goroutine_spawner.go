@@ -55,6 +55,7 @@ type GoroutineSpawner struct {
 	workspace           workspaceapi.URI
 	hookRunner          *hooks.Runner
 	prompter            Prompter
+	attribution         Attribution
 
 	// GenerateDialogueID, when non-nil, replaces the default
 	// petname generator for child dialogue IDs. Intended for testing.
@@ -108,6 +109,11 @@ func (s *GoroutineSpawner) SetRegistry(r *Registry) {
 // Must be called before any Run calls; nil is a no-op.
 func (s *GoroutineSpawner) SetHooks(r *hooks.Runner) {
 	s.hookRunner = r
+}
+
+// SetAttribution sets the commit attribution inherited by child agents.
+func (s *GoroutineSpawner) SetAttribution(attribution Attribution) {
+	s.attribution = attribution
 }
 
 // Run validates the request, creates a sub-agent, and returns
@@ -203,6 +209,7 @@ func (s *GoroutineSpawner) Run(
 	}
 	ag := NewAgent(svc, registry, s.skillRegistry, s.store, s.memory, Config{
 		SystemPrompt:        prompt,
+		Attribution:         s.attribution,
 		ProjectInstructions: s.projectInstructions,
 		SessionKey:          sessionKey,
 		AgentID:             agentID,

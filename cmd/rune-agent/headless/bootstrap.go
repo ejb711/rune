@@ -97,6 +97,7 @@ func bootstrap(
 		skills.NewRegistry(fs, cwd, nil, nil), store, agent.NoMemory(),
 		agent.Config{
 			SystemPrompt:        systemPrompt,
+			Attribution:         agent.DefaultAttribution(),
 			ProjectInstructions: agent.LoadAgentsFiles(fs, agentsFiles),
 			Model:               model,
 			Workspace:           cwd,

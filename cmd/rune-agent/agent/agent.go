@@ -50,6 +50,7 @@ type Config struct {
 	MaxToolOutputBytes int     // 0 uses DefaultMaxToolOutputBytes.
 	AutoCompactRatio   float64 // 0 uses defaultAutoCompactRatio.
 	SystemPrompt       string
+	Attribution        Attribution
 	SessionKey         string
 	AgentID            string
 	// Model carries the fully-resolved entry the agent loop targets.
@@ -659,6 +660,9 @@ func (a *Agent) run(
 		// reslice would keep them reachable until overwritten.
 		clear(transient)
 		transient = transient[:0]
+		if instructions := CommitAttributionInstructions(a.ModelEntry(), a.config.Attribution); instructions != "" {
+			transient = append(transient, llmapi.Message{Role: llmapi.RoleSystem, Content: instructions})
+		}
 		if section := skillsPromptSection(a.skillRegistry.List()); section != "" {
 			transient = append(transient, llmapi.Message{Role: llmapi.RoleSystem, Content: section})
 		}

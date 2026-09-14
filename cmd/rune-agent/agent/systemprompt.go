@@ -20,9 +20,44 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/unstablebuild/rune-go-sdk/api/llmapi"
 	"github.com/unstablebuild/rune-go-sdk/api/workspaceapi"
 	"unstable.build/rune/cmd/rune-agent/agent/skills"
 )
+
+// DefaultCommitAttribution is Rune Agent's model-aware commit trailer template.
+const DefaultCommitAttribution = "Co-Authored-By: Rune Agent ({{provider}}/{{model}}) <agent@rune.build>"
+
+// Attribution controls the attribution text included in agent-created commits.
+// A nil or empty Commit disables attribution.
+type Attribution struct {
+	Commit *string
+}
+
+// DefaultAttribution returns Rune Agent's standard commit attribution.
+func DefaultAttribution() Attribution {
+	commit := DefaultCommitAttribution
+	return Attribution{Commit: &commit}
+}
+
+// CommitAttributionInstructions returns commit instructions for the resolved model.
+func CommitAttributionInstructions(model llmapi.ModelEntry, attribution Attribution) string {
+	if attribution.Commit == nil || *attribution.Commit == "" {
+		return ""
+	}
+	commit := *attribution.Commit
+	commit = strings.NewReplacer(
+		"{{provider}}", model.Provider,
+		"{{model}}", model.Name,
+	).Replace(commit)
+	return fmt.Sprintf(`# Committing changes with git
+
+Only create commits when explicitly requested by the user. When creating a commit, end the commit message with this attribution text:
+
+%s
+
+Use a heredoc or equivalent multiline input so the attribution is separated from the commit body by a blank line.`, commit)
+}
 
 // DefaultSystemPrompt returns the system prompt for the coding agent.
 func DefaultSystemPrompt(cwd workspaceapi.URI) string {

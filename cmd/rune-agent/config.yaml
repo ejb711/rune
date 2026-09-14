@@ -10,6 +10,10 @@ extensions:
       # walks up from the workspace root looking for files with this
       # name and injects their contents into the system prompt.
       agents_file: AGENTS.md
+      # Commit attribution text. {{provider}} and {{model}} expand to the
+      # resolved model. Set commit to an empty string to disable attribution.
+      attribution:
+        commit: 'Co-Authored-By: Rune Agent ({{provider}}/{{model}}) <agent@rune.build>'
       # The chat (`agent`), query (`?`), compaction, and memory
       # consolidation models are host-side aliases named `default`,
       # `query`, `compact`, and `dream`. An unset alias falls back to

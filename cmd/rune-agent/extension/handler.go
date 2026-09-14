@@ -371,6 +371,18 @@ func newCommandEventHandler(
 	}
 	geminitools.Register(ret.toolRegistry)
 	ret.systemPrompt = agent.DefaultSystemPrompt(cwd)
+	ret.attribution = agent.DefaultAttribution()
+	if attribution, attributionErr := pconfig.GetMap("attribution"); attributionErr == nil {
+		if commit, ok := attribution["commit"]; ok {
+			if commitText, ok := commit.(string); ok {
+				ret.attribution.Commit = &commitText
+			} else {
+				slog.Warn("get 'attribution.commit' from config", "error", "value must be a string")
+			}
+		}
+	} else if !errors.Is(attributionErr, config.ErrNotFound) {
+		slog.Warn("get 'attribution' from config", "error", attributionErr)
+	}
 
 	// Discover and load project instruction files (e.g. AGENTS.md).
 	agentsFile := agent.DefaultAgentsFile
@@ -683,6 +695,7 @@ func newCommandEventHandler(
 			AutoCompactRatio:    ret.autoCompactRatio,
 			CompactSvc:          ret.compactSvc,
 			SystemPrompt:        agent.QuerySystemPrompt(ret.cwd) + agent.ProviderToolAddendum(queryEntry.Provider),
+			Attribution:         ret.attribution,
 			ProjectInstructions: ret.projectInstructions,
 			SessionKey:          "query",
 			AgentID:             "query",
@@ -724,6 +737,7 @@ type aiEditorHandler struct {
 	compactSvc          llmapi.Service
 	toolRegistry        *agent.Registry
 	systemPrompt        string
+	attribution         agent.Attribution
 	projectInstructions string
 	agentsConfig        *agent.Cfg
 	baseToolsMu         sync.RWMutex
@@ -1364,6 +1378,7 @@ func (h *aiEditorHandler) handleChat(cmd textapi.Command) error {
 	)
 	spawner.SetRegistry(chatRegistry)
 	spawner.SetHooks(h.hookRunner)
+	spawner.SetAttribution(h.attribution)
 
 	syncComp := syncComponent{mu: mu, comp: comp, h: h, hintSlot: hs}
 	h.openChats.Store(d.ID, syncComp)
@@ -1375,6 +1390,7 @@ func (h *aiEditorHandler) handleChat(cmd textapi.Command) error {
 			AutoCompactRatio:    h.autoCompactRatio,
 			CompactSvc:          h.compactSvc,
 			SystemPrompt:        h.systemPrompt + agent.ProviderToolAddendum(chatEntry.Provider),
+			Attribution:         h.attribution,
 			ProjectInstructions: h.projectInstructions,
 			SessionKey:          sessionKey,
 			AgentID:             agentID,
@@ -1520,6 +1536,7 @@ func (h *aiEditorHandler) handleQuery(cmd textapi.Command) error {
 		prompter,
 	)
 	spawner.SetRegistry(agent.NewRegistry(h.tools()...))
+	spawner.SetAttribution(h.attribution)
 	spawner.GenerateDialogueID = h.generateDialogueID
 	childEvents := make(chan agent.ChildEvent, 64)
 

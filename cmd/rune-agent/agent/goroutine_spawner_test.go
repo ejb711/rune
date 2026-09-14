@@ -777,7 +777,7 @@ func TestGoroutineSpawner_Run_seeds_initial_messages(t *testing.T) {
 	spawner := NewGoroutineSpawner(
 		store,
 		func(string) (llmapi.Service, llmapi.ModelEntry, error) {
-			return svc, llmapi.ModelEntry{Name: "test"}, nil
+			return svc, llmapi.ModelEntry{Name: "test", Provider: "provider"}, nil
 		},
 		cfg,
 		skills.NewRegistry(nopFileSystem{}, dirURI(""), nil, nil),

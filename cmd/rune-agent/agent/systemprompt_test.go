@@ -17,11 +17,45 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/unstablebuild/rune-go-sdk/api/llmapi"
 	"unstable.build/rune/cmd/rune-agent/agent/skills"
 )
+
+func TestCommitAttributionInstructions(t *testing.T) {
+	model := llmapi.ModelEntry{Provider: "anthropic", Name: "claude-opus-4-7"}
+
+	t.Run("default uses resolved model", func(t *testing.T) {
+		result := CommitAttributionInstructions(model, DefaultAttribution())
+		assert.Contains(t, result, "Only create commits when explicitly requested")
+		assert.Contains(t, result, "Co-Authored-By: Rune Agent (anthropic/claude-opus-4-7) <agent@rune.build>")
+	})
+
+	t.Run("custom text expands model placeholders", func(t *testing.T) {
+		custom := "Created-By: {{provider}}/{{model}}"
+		result := CommitAttributionInstructions(model, Attribution{Commit: &custom})
+		assert.Contains(t, result, "Created-By: anthropic/claude-opus-4-7")
+	})
+
+	t.Run("empty text disables attribution", func(t *testing.T) {
+		disabled := ""
+		result := CommitAttributionInstructions(model, Attribution{Commit: &disabled})
+		assert.Empty(t, result)
+		assert.NotContains(t, result, "Co-Authored-By")
+	})
+
+	t.Run("adds instructions once", func(t *testing.T) {
+		result := CommitAttributionInstructions(model, DefaultAttribution())
+		assert.Equal(t, 1, strings.Count(result, "Co-Authored-By:"))
+	})
+
+	t.Run("unset attribution is omitted", func(t *testing.T) {
+		assert.Empty(t, CommitAttributionInstructions(model, Attribution{}))
+	})
+}
 
 func TestSkillsPromptSection(t *testing.T) {
 	t.Run("empty skills returns empty string", func(t *testing.T) {
