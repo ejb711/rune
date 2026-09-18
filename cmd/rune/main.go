@@ -25,7 +25,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -134,20 +133,20 @@ func init() {
 	flagConfigPath = flag.StringP("config", "c", defaultConfigPath,
 		"Use this file for configuring rune")
 
-	defaultDataPath = path.Join(home, ".rune")
+	defaultDataPath = filepath.Join(home, ".rune")
 	flagDataPath = flag.StringP("datadir", "d", defaultDataPath,
 		"Set temporary data directory")
 
 	flagWorkspaceServerLogFile = flag.StringP("workspace-server-log", "o",
-		path.Join(defaultDataPath, "server.log"),
+		filepath.Join(defaultDataPath, "server.log"),
 		"Log workspace server logs to this file")
 
 	version = fmt.Sprintf("%s (HEAD is %s)", debug.Tag, debug.Commit)
 }
 
 func resolveDefaultConfigPath(dataDir string) string {
-	yamlPath := path.Join(dataDir, configFilename)
-	starPath := path.Join(dataDir, configStarFilename)
+	yamlPath := filepath.Join(dataDir, configFilename)
+	starPath := filepath.Join(dataDir, configStarFilename)
 	if _, err := os.Stat(yamlPath); err == nil {
 		return yamlPath
 	}
