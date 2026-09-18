@@ -276,6 +276,41 @@ func TestMigrateConfigKeyBindingsLeavesShippedPresetsAlone(t *testing.T) {
 	}
 }
 
+// TestMigrateConfigKeyBindingsHandlesFlowStyleConfig pins that a config
+// written as a flow mapping, such as `{}`, is still valid YAML after the
+// migration splices in the preset's block-style key bindings.
+func TestMigrateConfigKeyBindingsHandlesFlowStyleConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		legacy string
+		editor string
+		keep   map[string]any
+	}{
+		{"empty", "{}\n", editorModal, nil},
+		{"settings", "{log_level: debug, gui: {default_theme: mullen}}\n", editorModal,
+			map[string]any{"log_level": "debug"}},
+		{"editor", "{editor: {mode: emacs}}\n", editorEmacs, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeConfig(t, tc.legacy)
+			require.NoError(t, migrateConfigKeyBindings(path))
+
+			src, err := os.ReadFile(path)
+			require.NoError(t, err)
+			cfg := map[string]any{}
+			require.NoError(t, yaml.Unmarshal(src, &cfg), "migrated config:\n%s", src)
+			require.Equal(t, currentConfigVersion, cfg[configVersionKey])
+			for k, v := range tc.keep {
+				require.Equal(t, v, cfg[k])
+			}
+
+			preset, err := renderPreset(tc.editor)
+			require.NoError(t, err)
+			require.Equal(t, bindingsOf(t, []byte(preset)), bindingsOf(t, src))
+		})
+	}
+}
+
 func TestMigrateConfigKeyBindingsPreservesUnrelatedSettings(t *testing.T) {
 	const legacy = `log_level: debug
 gui:

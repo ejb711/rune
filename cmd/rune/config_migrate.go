@@ -17,6 +17,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -102,11 +103,54 @@ func migrateConfigKeyBindings(configPath string) error {
 		return err
 	}
 
+	src, err = blockStyleConfig(src)
+	if err != nil {
+		return fmt.Errorf("parse %s: %w", configPath, err)
+	}
 	out, err := applyPresetKeyBindings(src, entries, keys)
 	if err != nil {
 		return err
 	}
 	return writeFileAtomic(configPath, out)
+}
+
+// blockStyleConfig rewrites a config whose top level is a flow mapping, such
+// as `{}`, as block YAML, because applyPresetKeyBindings splices block YAML
+// line by line and would otherwise produce an invalid document. Block
+// configs are returned unchanged so their exact formatting survives.
+func blockStyleConfig(src []byte) ([]byte, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(src, &doc); err != nil {
+		return nil, err
+	}
+	if len(doc.Content) == 0 {
+		return src, nil
+	}
+	top := doc.Content[0]
+	if top.Kind != yaml.MappingNode || top.Style&yaml.FlowStyle == 0 {
+		return src, nil
+	}
+	if len(top.Content) == 0 {
+		return nil, nil
+	}
+	clearFlowStyle(top)
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func clearFlowStyle(n *yaml.Node) {
+	n.Style &^= yaml.FlowStyle
+	for _, c := range n.Content {
+		clearFlowStyle(c)
+	}
 }
 
 // presetEditorFor resolves which preset owns a config's bindings.
