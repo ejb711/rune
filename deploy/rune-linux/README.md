@@ -176,6 +176,7 @@ rune.app/
       .zprofile
       .zshenv
       .zshrc
+      inputrc         # readline bindings for bash in the integrated terminal
 ```
 
 ## System library requirements
