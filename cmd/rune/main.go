@@ -71,12 +71,14 @@ import (
 const (
 	doubleClickTimeout = 500 * time.Millisecond
 	telemetryPeriod    = 1 * time.Hour
+
+	flagNameNoSessionReopen = "no-session-reopen"
 )
 
 var (
 	apicfg = apiclient.DefaultConfig()
-	// Version is a combination of Tag and Commit, representing
-	// this executables version.
+	// Version is a combination of Tag, Commit and BuildDate,
+	// representing this executables version.
 	version string
 
 	configFilename          = "config.yaml"
@@ -120,6 +122,9 @@ var (
 	flagWebsiteAddress = flag.String("rune-website-address", apiclient.DefaultWebsiteAddress,
 		"Base URL of the Rune website. Used to build the checkout URL "+
 			"opened by the upgrade prompt during bootstrap and lockdown.")
+	flagNoSessionReopen = flag.Bool(flagNameNoSessionReopen, false,
+		"Do not offer to reopen the workspaces from the last session. "+
+			"Set on the processes spawned by guiwindownew.")
 )
 
 func init() {
@@ -142,7 +147,17 @@ func init() {
 		path.Join(defaultDataPath, "server.log"),
 		"Log workspace server logs to this file")
 
-	version = fmt.Sprintf("%s (HEAD is %s)", debug.Tag, debug.Commit)
+	version = versionString(debug.Tag, debug.Commit, debug.BuildDate)
+}
+
+// versionString renders the --version line. buildDate is empty for
+// builds that go through plain `go build` rather than the Makefile or
+// a distro package, so it is reported only when the ldflag is set.
+func versionString(tag, commit, buildDate string) string {
+	if buildDate == "" {
+		return fmt.Sprintf("%s (HEAD is %s)", tag, commit)
+	}
+	return fmt.Sprintf("%s (HEAD is %s, built %s)", tag, commit, buildDate)
 }
 
 func resolveDefaultConfigPath(dataDir string) string {
@@ -309,6 +324,9 @@ func main() {
 		panic(err)
 	}
 	if err := flag.CommandLine.MarkHidden("rune-website-address"); err != nil {
+		panic(err)
+	}
+	if err := flag.CommandLine.MarkHidden(flagNameNoSessionReopen); err != nil {
 		panic(err)
 	}
 
@@ -730,12 +748,18 @@ func runGUI(
 	// Capture the launch command for guiwindownew. Visit iterates
 	// only over flags that were explicitly set (including
 	// macOS-injected defaults after the second flag.Parse), so
-	// positional filename args are naturally excluded.
+	// positional filename args are naturally excluded. The reopen
+	// flag is re-added unconditionally rather than inherited, so a
+	// spawned window never restores the parent instance's session.
 	execPath, _ := os.Executable()
 	var launchArgs []string
 	flag.CommandLine.Visit(func(f *flag.Flag) {
+		if f.Name == flagNameNoSessionReopen {
+			return
+		}
 		launchArgs = append(launchArgs, fmt.Sprintf("--%s=%s", f.Name, f.Value.String()))
 	})
+	launchArgs = append(launchArgs, "--"+flagNameNoSessionReopen)
 	launchCmd := append([]string{execPath}, launchArgs...)
 
 	chdirerr := os.Chdir(home)
