@@ -60,7 +60,13 @@ func TestWithServerInterceptorsAppendsToConfig(t *testing.T) {
 func TestNewUnixListenerCreatesSocketDir(t *testing.T) {
 	t.Parallel()
 
-	dataDir := filepath.Join(t.TempDir(), "data")
+	// t.TempDir() bakes the test name into the path, which on macOS
+	// overflows sun_path and silently diverts the socket to os.TempDir().
+	base, err := os.MkdirTemp("", "rn")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(base) })
+
+	dataDir := filepath.Join(base, "d")
 	r := &Runner{dataDir: dataDir}
 	uri, err := workspaceapi.ParseURI("file:///home/me/proj")
 	require.NoError(t, err)
