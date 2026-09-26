@@ -1628,15 +1628,21 @@ func (a *Agent) persistMessages(
 	return true
 }
 
-// summarizeMaxOutputTokens returns the output-token budget to use for a
+// SummarizeMaxOutputTokens returns the output-token budget to use for a
 // compaction summary. An explicit session override is respected; otherwise
-// a default higher than the Anthropic 8192 fallback is used, clamped to the
-// bound model's documented ceiling so the request is not rejected.
-func summarizeMaxOutputTokens(sessionValue int, model llmapi.ModelEntry) int {
+// a default higher than the Anthropic 8192 fallback is used. Either way the
+// budget is clamped to the model's documented ceiling so the request is not
+// rejected: the session override is validated against the chat model, which
+// need not be the model that summarizes.
+func SummarizeMaxOutputTokens(sessionValue int, model llmapi.ModelEntry) int {
+	ceiling := llmarg.MaxOutputTokens(model)
 	if sessionValue > 0 {
+		if ceiling > 0 {
+			return min(sessionValue, ceiling)
+		}
 		return sessionValue
 	}
-	if ceiling := llmarg.MaxOutputTokens(model); ceiling > 0 {
+	if ceiling > 0 {
 		return min(defaultSummarizeMaxTokens, ceiling)
 	}
 	return 0
@@ -1656,7 +1662,7 @@ func (a *Agent) compact(
 
 	compactedMsgs, archivedID, err := CompactDialogue(
 		ctx, summarizeSvc, a.config.Model, a.store, d,
-		WithMaxOutputTokens(summarizeMaxOutputTokens(a.MaxOutputTokens(), a.config.Model)),
+		WithMaxOutputTokens(SummarizeMaxOutputTokens(a.MaxOutputTokens(), a.config.Model)),
 	)
 	if err != nil {
 		emit(ctx, ch, Event{Type: EventError, Error: fmt.Errorf("compact: %v", err)})
@@ -1858,7 +1864,7 @@ func cleanSummary(raw string) string {
 	text := reAnalysis.ReplaceAllString(raw, "")
 	if m := reSummary.FindStringSubmatch(text); len(m) >= 2 {
 		inner := strings.TrimSpace(m[1])
-		text = reSummary.ReplaceAllString(text, "Summary:\n"+inner)
+		text = reSummary.ReplaceAllLiteralString(text, "Summary:\n"+inner)
 	} else if before, after, ok := strings.Cut(text, "<summary>"); ok {
 		text = before + "Summary:\n" + strings.TrimSpace(after)
 	}
