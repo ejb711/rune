@@ -245,9 +245,10 @@ func startWorkspaceServer() int {
 					log.Info("Received SIGKILL signal: exiting")
 					os.Exit(1)
 				default:
-					if !isUrgentDataSignal(sig) {
-						log.Debugf("Received unhandled signal: %#v", sig)
+					if isUrgentDataSignal(sig) {
+						break
 					}
+					log.Debugf("Received unhandled signal: %#v", sig)
 				}
 			case <-quitch:
 				return

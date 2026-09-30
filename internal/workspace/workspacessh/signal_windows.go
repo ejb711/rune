@@ -14,22 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package main
+package workspacessh
 
 import (
-	"os"
+	"syscall"
 
-	"golang.org/x/sys/windows"
+	"golang.org/x/crypto/ssh"
 )
 
-func isUrgentDataSignal(os.Signal) bool {
-	return false
-}
-
-func redirectStderr(f *os.File) {
-	// The runtime looks up the standard error handle on every fatal write,
-	// so this also captures crash dumps.
-	if windows.SetStdHandle(windows.STD_ERROR_HANDLE, windows.Handle(f.Fd())) == nil {
-		os.Stderr = f
-	}
-}
+var platformSigMap map[syscall.Signal]ssh.Signal

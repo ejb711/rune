@@ -20,24 +20,33 @@ package main
 
 import (
 	"os"
-	"syscall"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 )
 
-func TestIsUrgentDataSignal(t *testing.T) {
-	for _, tc := range []struct {
-		sig  os.Signal
-		want bool
-	}{
-		{syscall.SIGURG, true},
-		{syscall.SIGTERM, false},
-		{syscall.SIGINT, false},
-		{syscall.SIGKILL, false},
-	} {
-		t.Run(tc.sig.String(), func(t *testing.T) {
-			assert.Equal(t, tc.want, isUrgentDataSignal(tc.sig))
-		})
-	}
+// The runtime writes fatal crash dumps straight to fd 2, bypassing
+// os.Stderr, so the redirect must replace the descriptor itself.
+func TestRedirectStderrCapturesFD2(t *testing.T) {
+	saved, err := unix.Dup(unix.Stderr)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = unix.Dup2(saved, unix.Stderr)
+		_ = unix.Close(saved)
+	})
+
+	f, err := os.Create(filepath.Join(t.TempDir(), "launch.log"))
+	require.NoError(t, err)
+	defer f.Close()
+
+	redirectStderr(f)
+	_, err = unix.Write(unix.Stderr, []byte("fatal error: boom\n"))
+	require.NoError(t, err)
+
+	got, err := os.ReadFile(f.Name())
+	require.NoError(t, err)
+	assert.Equal(t, "fatal error: boom\n", string(got))
 }

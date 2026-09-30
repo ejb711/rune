@@ -18,9 +18,13 @@
 
 package workspacessh
 
-import "syscall"
+import (
+	"syscall"
 
-func init() {
-	sigMap[syscall.SIGUSR1] = "USR1"
-	sigMap[syscall.SIGUSR2] = "USR2"
+	"golang.org/x/crypto/ssh"
+)
+
+var platformSigMap = map[syscall.Signal]ssh.Signal{
+	syscall.SIGUSR1: "USR1",
+	syscall.SIGUSR2: "USR2",
 }

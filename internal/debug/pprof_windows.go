@@ -14,22 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package main
+package debug
 
-import (
-	"os"
-
-	"golang.org/x/sys/windows"
-)
-
-func isUrgentDataSignal(os.Signal) bool {
-	return false
-}
-
-func redirectStderr(f *os.File) {
-	// The runtime looks up the standard error handle on every fatal write,
-	// so this also captures crash dumps.
-	if windows.SetStdHandle(windows.STD_ERROR_HANDLE, windows.Handle(f.Fd())) == nil {
-		os.Stderr = f
-	}
-}
+// StartPProfOnSignal is a no-op on Windows, which has no SIGUSR1 to
+// trigger it; call StartPProfHTTP directly instead.
+func StartPProfOnSignal() {}

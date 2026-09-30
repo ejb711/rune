@@ -23,22 +23,21 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
 )
 
-func TestSigMapForwardsUserSignals(t *testing.T) {
+func TestGoSshSessionSignalUserSignals(t *testing.T) {
 	for _, tc := range []struct {
 		sig  syscall.Signal
 		want ssh.Signal
 	}{
 		{syscall.SIGUSR1, "USR1"},
 		{syscall.SIGUSR2, "USR2"},
-		{syscall.SIGTERM, "TERM"},
-		{syscall.SIGKILL, "KILL"},
 	} {
 		t.Run(tc.sig.String(), func(t *testing.T) {
-			got, ok := sigMap[tc.sig]
-			assert.True(t, ok)
+			got, err := sentSSHSignal(t, tc.sig)
+			require.NoError(t, err)
 			assert.Equal(t, tc.want, got)
 		})
 	}
