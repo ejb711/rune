@@ -19,18 +19,28 @@
 package procattr
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"syscall"
+	"time"
+
+	"golang.org/x/sys/windows"
 )
 
-// taskkill exits with this code when the process no longer exists.
-const taskkillNotFound = 128
+const (
+	// taskkill exits with this code when the process no longer exists.
+	taskkillNotFound = 128
+	// KillGroup runs from exec.Cmd.Cancel and teardown paths that the Unix
+	// implementation never blocks, so a wedged taskkill must not hang them.
+	taskkillTimeout = 10 * time.Second
+)
 
 // NewGroup returns attributes that start the process as the root of a new
-// process group.
+// process group. Such a process ignores CTRL_C_EVENT unless it re-enables it.
 func NewGroup() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP}
 }
@@ -41,15 +51,26 @@ func NewSession(setsid, setctty bool) *syscall.SysProcAttr {
 }
 
 // LeadsGroup reports whether attr starts the process as the root of a new
-// process group.
+// process group. Callers opt into having the process's descendants terminated
+// with it by asking for a new group, even though KillGroup does not depend on
+// the group, so that the contract matches Unix.
 func LeadsGroup(attr *syscall.SysProcAttr) bool {
 	return attr != nil && attr.CreationFlags&syscall.CREATE_NEW_PROCESS_GROUP != 0
 }
 
 // KillGroup terminates proc and every process descended from it.
 func KillGroup(proc *os.Process) error {
+	sysDir, err := windows.GetSystemDirectory()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), taskkillTimeout)
+	defer cancel()
 	// Windows has no group-wide signal; taskkill /T walks the parent-pid tree.
-	err := exec.Command("taskkill", taskkillArgs(proc.Pid)...).Run()
+	// Resolving it from the system directory keeps PATH from choosing it.
+	cmd := exec.CommandContext(ctx, filepath.Join(sysDir, "taskkill.exe"), taskkillArgs(proc.Pid)...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NO_WINDOW}
+	err = cmd.Run()
 	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok && exitErr.ExitCode() == taskkillNotFound {
 		return os.ErrProcessDone
 	}
@@ -67,5 +88,6 @@ func Signal(pid int, sig syscall.Signal) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = proc.Release() }()
 	return proc.Signal(sig)
 }

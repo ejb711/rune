@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//go:build !windows
+//go:build unix
 
 package procattr
 
@@ -31,13 +31,19 @@ func NewGroup() *syscall.SysProcAttr {
 }
 
 // NewSession returns attributes that start the process in a new session and,
-// with setctty, make its stdin pty the controlling terminal.
+// with setctty, make its stdin pty the controlling terminal. It returns nil
+// when neither is requested.
 func NewSession(setsid, setctty bool) *syscall.SysProcAttr {
+	if !setsid && !setctty {
+		return nil
+	}
 	return &syscall.SysProcAttr{Setsid: setsid, Setctty: setctty}
 }
 
 // LeadsGroup reports whether attr starts the process as the leader of a new
-// process group rather than joining an existing one.
+// process group. Callers opt into having the process's descendants terminated
+// with it by asking for a new group; joining an existing Pgid is someone
+// else's group and not ours to signal.
 func LeadsGroup(attr *syscall.SysProcAttr) bool {
 	return attr != nil && attr.Setpgid && attr.Pgid == 0
 }

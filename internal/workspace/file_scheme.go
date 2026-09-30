@@ -428,11 +428,9 @@ func (p *fileScheme) StartCommand(ctx context.Context, cmd workspaceapi.Cmd) (
 	stdcmd.Env = gitenv.Sanitize(stdcmd.Environ())
 	stdcmd.Env = append(stdcmd.Env, cmd.Env...)
 	stdcmd.SysProcAttr = cmd.SysProcAttr
-	// A caller that asks to head a new process group is asking for its
-	// descendants to be terminated with it: intermediaries like
-	// `go run` exec the real program as a grandchild that SIGKILL
-	// cannot be forwarded to. Joining an existing Pgid is someone
-	// else's group and not ours to signal.
+	// Intermediaries like `go run` exec the real program as a grandchild
+	// that SIGKILL cannot be forwarded to, so a group leader's tree is
+	// torn down with it.
 	leadsGroup := procattr.LeadsGroup(cmd.SysProcAttr)
 	if leadsGroup {
 		stdcmd.Cancel = func() error { return procattr.KillGroup(stdcmd.Process) }
@@ -523,7 +521,7 @@ func (p *fileScheme) Signal(pid workspaceapi.Pid, signal syscall.Signal) error {
 
 	err := procattr.Signal(int(pid), signal)
 	if err != nil {
-		return fmt.Errorf("syscall kill: %w", err)
+		return fmt.Errorf("signal: %w", err)
 	}
 	return nil
 }

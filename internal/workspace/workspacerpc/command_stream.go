@@ -62,14 +62,12 @@ func newServerCommandStreamer(
 	doneCh := make(chan error)
 
 	cmd := workspaceapi.Cmd{
-		Path:    path,
-		Dir:     dir,
-		Args:    args,
-		Env:     env,
-		Watcher: workspaceapi.ChanProcessWatcher(doneCh),
-	}
-	if setsid || setctty {
-		cmd.SysProcAttr = procattr.NewSession(setsid, setctty)
+		Path:        path,
+		Dir:         dir,
+		Args:        args,
+		Env:         env,
+		Watcher:     workspaceapi.ChanProcessWatcher(doneCh),
+		SysProcAttr: procattr.NewSession(setsid, setctty),
 	}
 
 	ret := new(serverCommandStreamer)

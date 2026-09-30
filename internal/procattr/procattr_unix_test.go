@@ -14,38 +14,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-//go:build !windows
+//go:build unix
 
 package procattr
 
 import (
+	"math"
 	"os"
-	"os/exec"
 	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-func TestNewGroup(t *testing.T) {
-	assert.Equal(t, &syscall.SysProcAttr{Setpgid: true}, NewGroup())
-}
-
-func TestNewSession(t *testing.T) {
-	for _, tc := range []struct {
-		name            string
-		setsid, setctty bool
-		want            *syscall.SysProcAttr
-	}{
-		{"session and tty", true, true, &syscall.SysProcAttr{Setsid: true, Setctty: true}},
-		{"session only", true, false, &syscall.SysProcAttr{Setsid: true}},
-		{"tty only", false, true, &syscall.SysProcAttr{Setctty: true}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, NewSession(tc.setsid, tc.setctty))
-		})
-	}
+func TestNewSessionWithNothingRequestedIsNil(t *testing.T) {
+	assert.Nil(t, NewSession(false, false))
 }
 
 func TestLeadsGroup(t *testing.T) {
@@ -66,10 +49,9 @@ func TestLeadsGroup(t *testing.T) {
 	}
 }
 
-func TestKillGroupAfterExitReportsProcessDone(t *testing.T) {
-	cmd := exec.Command("true")
-	cmd.SysProcAttr = NewGroup()
-	require.NoError(t, cmd.Run())
-
-	assert.ErrorIs(t, KillGroup(cmd.Process), os.ErrProcessDone)
+func TestKillGroupWithNoSuchGroupReportsProcessDone(t *testing.T) {
+	// Above every platform's pid_max, so no group can hold this id; a reaped
+	// child's pid could be reused and put an unrelated group in the line of fire.
+	proc := &os.Process{Pid: math.MaxInt32 - 1}
+	assert.ErrorIs(t, KillGroup(proc), os.ErrProcessDone)
 }

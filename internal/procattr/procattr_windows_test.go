@@ -27,13 +27,16 @@ import (
 
 func TestTaskkillArgs(t *testing.T) {
 	for _, tc := range []struct {
+		name string
 		pid  int
 		want []string
 	}{
-		{1234, []string{"/T", "/F", "/PID", "1234"}},
-		{4, []string{"/T", "/F", "/PID", "4"}},
+		{"multi-digit pid", 1234, []string{"/T", "/F", "/PID", "1234"}},
+		{"single-digit pid", 4, []string{"/T", "/F", "/PID", "4"}},
 	} {
-		assert.Equal(t, tc.want, taskkillArgs(tc.pid))
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, taskkillArgs(tc.pid))
+		})
 	}
 }
 
