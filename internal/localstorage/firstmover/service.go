@@ -839,13 +839,15 @@ func (s *Service) leadOrFollow() {
 
 	})
 
-	// Create the directory up front rather than on ENOENT: Windows reports a
-	// missing parent directory from bind(2) as WSAENETDOWN.
-	if err := os.MkdirAll(filepath.Dir(s.lockFileListen), 0766); err != nil {
-		s.log(log.WarnLevel, "create lock dir: %v", err)
-	}
-
 	fn := func(ctx context.Context) (bool, error) {
+		// Ensure the directory before every bind instead of reacting to ENOENT:
+		// Windows reports a missing parent directory as WSAENETDOWN, and the
+		// directory can vanish while this peer is following.
+		if err := os.MkdirAll(filepath.Dir(s.lockFileListen), 0766); err != nil {
+			s.log(log.WarnLevel, "create lock dir: %v", err)
+			return false, err
+		}
+
 		var cfg net.ListenConfig
 		listener, err := cfg.Listen(ctx, "unix", s.lockFileListen)
 		if err == nil {

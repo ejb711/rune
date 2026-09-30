@@ -528,7 +528,7 @@ func TestServiceTakesOverStaleLock(t *testing.T) {
 			return lockFile
 		}},
 		{"lock directory does not exist yet", func(t *testing.T) string {
-			return filepath.Join(t.TempDir(), "missing", "db.lock")
+			return filepath.Join(makeShortTempDir(t), "missing", "db.lock")
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -541,6 +541,37 @@ func TestServiceTakesOverStaleLock(t *testing.T) {
 			assert.True(t, svc.IsLeader())
 		})
 	}
+}
+
+// TestFollowerRecreatesRemovedLockDir covers the lock directory disappearing
+// while a follower is connected (e.g. a tmp reaper): when the leader goes away
+// the follower must recreate the directory and lead instead of giving up.
+func TestFollowerRecreatesRemovedLockDir(t *testing.T) {
+	lockDir := filepath.Join(makeShortTempDir(t), "lock")
+	lockFile := filepath.Join(lockDir, "db.lock")
+	cfg := testConfig()
+	factory := factoryFor(storagestub.NewInMemoryService())
+
+	leader := New(factory, lockFile, cfg)
+	t.Cleanup(func() { _ = leader.Close() })
+	leaderPart, err := leader.Partition("p")
+	require.NoError(t, err)
+	require.NoError(t, leaderPart.Set(context.Background(), "k", &testStruct{A: "v"}))
+
+	follower := New(factory, lockFile, cfg)
+	t.Cleanup(func() { _ = follower.Close() })
+	followerPart, err := follower.Partition("p")
+	require.NoError(t, err)
+	var got testStruct
+	require.NoError(t, followerPart.Get(context.Background(), "k", &got))
+
+	require.NoError(t, os.RemoveAll(lockDir))
+	require.NoError(t, leader.Close())
+
+	require.Eventually(t, follower.IsLeader, 5*time.Second, 10*time.Millisecond,
+		"follower must take leadership after the lock directory is removed")
+	require.NoError(t, followerPart.Get(context.Background(), "k", &got))
+	assert.Equal(t, "v", got.A)
 }
 
 func TestPartitionWorksAfterLeaderFailoverWithoutGoodbye(t *testing.T) {
@@ -929,6 +960,16 @@ func makeTempLockFile(t *testing.T) string {
 		_ = os.Remove(f.Name())
 	})
 	return f.Name()
+}
+
+// makeShortTempDir returns a directory whose paths stay under
+// unixSocketPathMax; t.TempDir embeds the test name and would make
+// normalizedLockFile relocate the lock to /tmp.
+func makeShortTempDir(t *testing.T) string {
+	dir, err := os.MkdirTemp("", "fm")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
 }
 
 type alternatingService struct {

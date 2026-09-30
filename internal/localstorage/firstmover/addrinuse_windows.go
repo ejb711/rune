@@ -25,7 +25,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// Go's syscall.EADDRINUSE on Windows is not the Winsock code that bind(2)
+// Go's syscall.EADDRINUSE on Windows is not the Winsock code that bind
 // returns for a socket path that is already taken.
 func isAddrInUse(err error) bool {
 	return errors.Is(err, syscall.EADDRINUSE) || errors.Is(err, windows.WSAEADDRINUSE)
