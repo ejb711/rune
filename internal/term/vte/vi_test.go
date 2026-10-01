@@ -783,6 +783,41 @@ func TestBashViModeEdgeCases(t *testing.T) {
 	}
 }
 
+// TestZshViModeEdgeCases checks that modal mode engages when the user's zsh
+// uses the vi keymap, whose viins self-inserts ^A and ^G and leaves the
+// delete key unbound, so ESC [ 3 ~ turns into vicmd's case swap. zsh starts
+// as the default login shell, so the test covers how the dotfiles reach zsh
+// and not only what they bind.
+func TestZshViModeEdgeCases(t *testing.T) {
+	zshPath, err := find.Executable("zsh")
+	if err != nil {
+		t.Skip("zsh not found in PATH")
+	}
+	home := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".zshrc"),
+		[]byte("bindkey -v\nPS1='$ '\n"), 0o644))
+	t.Setenv("HOME", home)
+	t.Setenv("SHELL", zshPath)
+	// an inherited ZDOTDIR would mask a missing export
+	t.Setenv("ZDOTDIR", "")
+
+	cases := []vtetest.Case{
+		{"echo blaaa<0Cecho hi", `$ echo hi▐          
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    `},
+	}
+	cfg := DefaultConfig()
+	cfg.Modal = true
+	testSequenceCommand(t, cfg, defaultWaitForIdleVte, nil, cases)
+}
+
 // TestFishEdgeCases checks that modal mode engages under fish with the
 // bindings the file scheme passes through --init-command.
 func TestFishEdgeCases(t *testing.T) {
