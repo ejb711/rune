@@ -63,11 +63,13 @@ var (
 // resize worker matches on the text to drop the resize silently.
 var ErrInvalidMasterPtyFd = errors.New("invalid master pty fd")
 
-// FishInitCommand binds ^A/^G in fish so the vte's bell handshake
-// (see vte.ptyWriter.triggerBell) works: fish binds neither by default
-// and has no beep widget, so ^G prints BEL itself.
-const FishInitCommand = `bind \ca beginning-of-line; bind \cg 'printf \a'; ` +
-	`bind -M insert \ca beginning-of-line; bind -M insert \cg 'printf \a'`
+// FishInitCommand binds ^A/^E/^G in fish so the vte's bell handshake
+// (see vte.ptyWriter.triggerBell) and its end-of-line moves (see
+// vte.viHandler.remoteMoveTo) work: fish binds none of them in insert
+// mode and has no beep widget, so ^G prints BEL itself.
+const FishInitCommand = `bind \ca beginning-of-line; bind \ce end-of-line; ` +
+	`bind \cg 'printf \a'; bind -M insert \ca beginning-of-line; ` +
+	`bind -M insert \ce end-of-line; bind -M insert \cg 'printf \a'`
 
 // NewFileScheme returns a Scheme that manages resources
 // on the local file system.

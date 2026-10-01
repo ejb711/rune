@@ -738,6 +738,9 @@ func TestBashViModeEdgeCases(t *testing.T) {
 	inputrc, err := filepath.Abs("../../../extra/osx/Rune.app/Contents/Resources/zdot/inputrc")
 	require.NoError(t, err)
 	t.Setenv("INPUTRC", inputrc)
+	// bash 3.2 as shipped on macOS prints a zsh-migration banner on every
+	// interactive startup, which would scroll the screen away.
+	t.Setenv("BASH_SILENCE_DEPRECATION_WARNING", "1")
 
 	rc := filepath.Join(t.TempDir(), "bashrc")
 	require.NoError(t, os.WriteFile(rc, []byte("set -o vi\nPS1='$ '\n"), 0o644))
@@ -931,7 +934,7 @@ func TestViEditUnit(t *testing.T) {
 			actualBellsRung++
 		}
 		vi.doInit(comp, cfg)
-		vi.remote = newTestRemote(comp.scroll, comp.cursor)
+		vi.remote = newTestRemote(comp.scroll, 18, comp.cursor)
 		vi.Resize(18, 18)
 
 		// Mimic what vte.Component.RestoreFromSnapshot does: rewrite
@@ -941,7 +944,7 @@ func TestViEditUnit(t *testing.T) {
 		comp.scroll.Buffer().ResetCells(term.StringToCells("$ restored "))
 		comp.cursor = term.Coordinates{X: 11}
 		vi.setCursorAtScroll(comp.cursor)
-		vi.remote = newTestRemote(comp.scroll, comp.cursor)
+		vi.remote = newTestRemote(comp.scroll, 18, comp.cursor)
 
 		from, to, old := vi.Edit(context.Background(),
 			comp.cursor, comp.cursor, "X")
@@ -1600,7 +1603,7 @@ aaaaaaaooaaaa
 				actualBellsRung++
 			}
 			vi.doInit(comp, cfg)
-			vi.remote = newTestRemote(comp.scroll, test.promptStart)
+			vi.remote = newTestRemote(comp.scroll, 18, test.promptStart)
 			vi.Resize(18, 18)
 
 			ctx := context.Background()
@@ -1616,6 +1619,54 @@ aaaaaaaooaaaa
 				expectedBellsRung = 1
 			}
 			assert.Equal(t, expectedBellsRung, actualBellsRung, "bells rung")
+		})
+	}
+}
+
+// TestViRemoteMoveTo asserts that the append column is reached with an
+// end-of-line command: the vte homes the shell cursor with ^A and walks
+// right, but readline clamps forward-char to the last character while
+// the shell's line editor is in vi mode.
+func TestViRemoteMoveTo(t *testing.T) {
+	t.Parallel()
+	// the fake prompt "$ " occupies the first two columns
+	const promptEnd = 2
+
+	for _, tc := range []struct {
+		name    string
+		content string
+		target  term.Coordinates
+		want    []string
+		wantX   int
+	}{
+		{
+			name:    "append past last character asks for end of line",
+			content: "$ e", target: term.Coordinates{X: 3},
+			want: []string{"moveEndOfLine"}, wantX: 3,
+		},
+		{
+			name:    "column inside the line still walks right",
+			content: "$ echo", target: term.Coordinates{X: 4},
+			want: []string{"moveRight", "moveRight"}, wantX: 4,
+		},
+		{
+			name:    "append column already under the cursor moves nothing",
+			content: "$ ", target: term.Coordinates{X: promptEnd},
+			want: nil, wantX: promptEnd,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			comp := newTestParentComponent(tc.content, term.Coordinates{X: promptEnd})
+			var v viHandler
+			v.doInit(comp, DefaultConfig())
+			v.width = 20
+			scroll, _ := comp.PrimaryScroll()
+			remote := newTestRemote(scroll, 20, term.Coordinates{X: promptEnd})
+			v.remote = remote
+
+			assert.Equal(t, tc.wantX, v.remoteMoveTo(tc.target))
+			assert.Equal(t, tc.want, remote.calls)
 		})
 	}
 }
@@ -1678,17 +1729,22 @@ func (nopLocker) Unlock() {
 
 type testRemote struct {
 	cursor             *text.Cursor
+	width              int
 	keyArrowUpCalled   int
 	keyArrowDownCalled int
 	formFeedCalled     int
 	lineFeedCalled     int
 	ops                []func()
 	ctx                context.Context
+	calls              []string
 }
 
-func newTestRemote(scroll *component.Scroll, cursorPosition term.Coordinates) *testRemote {
+func newTestRemote(
+	scroll *component.Scroll, width int, cursorPosition term.Coordinates,
+) *testRemote {
 	ret := new(testRemote)
 	ret.cursor = new(text.Cursor)
+	ret.width = width
 	ret.cursor.InitPerformance(scroll)
 	// needed to ensure that remote edits bypass Edit checks
 	ret.ctx = vtescreen.NewContext(context.Background())
@@ -1697,7 +1753,26 @@ func newTestRemote(scroll *component.Scroll, cursorPosition term.Coordinates) *t
 }
 
 func (r *testRemote) moveStartOfLine() {
+	r.calls = append(r.calls, "moveStartOfLine")
 	r.cursor.MoveStartLine()
+}
+
+func (r *testRemote) moveEndOfLine() {
+	r.calls = append(r.calls, "moveEndOfLine")
+	r.ops = append(r.ops, func() {
+		// The shell's end-of-line reaches the end of its whole line
+		// buffer, which the vte renders as a run of full-width rows.
+		for {
+			r.cursor.MoveEndLine()
+			if r.width <= 0 || r.cursor.CursorAtScroll().X < r.width {
+				return
+			}
+			if !r.cursor.MoveDown() {
+				return
+			}
+			r.cursor.MoveStartLine()
+		}
+	})
 }
 
 func (r *testRemote) keyArrowUp() {
@@ -1729,12 +1804,14 @@ func (r *testRemote) formFeed() {
 }
 
 func (r *testRemote) moveLeft() {
+	r.calls = append(r.calls, "moveLeft")
 	r.ops = append(r.ops, func() {
 		r.cursor.MoveLeft()
 	})
 }
 
 func (r *testRemote) moveRight() {
+	r.calls = append(r.calls, "moveRight")
 	r.ops = append(r.ops, func() {
 		r.cursor.MoveRight()
 	})
@@ -1753,6 +1830,7 @@ func (r *testRemote) wrapLine() {
 }
 
 func (r *testRemote) cursorCRLF() {
+	r.calls = append(r.calls, "cursorCRLF")
 	r.ops = append(r.ops, func() {
 		r.cursor.MoveDown()
 		r.cursor.MoveStartLine()
