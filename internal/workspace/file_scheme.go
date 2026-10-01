@@ -103,7 +103,7 @@ const FishInitCommand = `bind \ca beginning-of-line; bind \ce end-of-line; ` +
 	`bind -M insert \ce end-of-line; bind -M insert \cg 'printf \a'`
 
 // NewFileScheme returns a Scheme that manages resources
-// on the local file system. Login shells it starts load only the user's
+// on the local file system. Terminal shells it starts load only the user's
 // own dotfiles; see NewFileSchemeFunc.
 func NewFileScheme(
 	_ context.Context, _ config.Config, workspace workspaceapi.URI,
@@ -111,7 +111,7 @@ func NewFileScheme(
 	return newFileScheme(workspace, "")
 }
 
-// NewFileSchemeFunc returns a SchemeFunc for file schemes whose login
+// NewFileSchemeFunc returns a SchemeFunc for file schemes whose terminal
 // shells also load the dotfiles in shellRCDir, as returned by
 // InstallShellRC. An empty shellRCDir behaves like NewFileScheme.
 func NewFileSchemeFunc(shellRCDir string) schemeapi.SchemeFunc {
@@ -424,24 +424,15 @@ func (p *fileScheme) StartCommand(ctx context.Context, cmd workspaceapi.Cmd) (
 	// shell on the executor's host".
 	if cmd.Path == "" {
 		cmd.Path = resolveLoginShell()
-		argsDefaulted := len(cmd.Args) == 0
-		if argsDefaulted {
+		if len(cmd.Args) == 0 {
 			cmd.Args = []string{"--login", "-i"}
 		}
-		switch filepath.Base(cmd.Path) {
-		case "zsh":
-			if p.shellRCDir != "" {
-				cmd.Env = append(cmd.Env, "ZDOTDIR="+p.shellRCDir)
-			}
-		case "bash":
-			if p.shellRCDir != "" {
-				cmd.Env = append(cmd.Env, "INPUTRC="+filepath.Join(p.shellRCDir, "inputrc"))
-			}
-		case "fish":
-			if argsDefaulted {
-				cmd.Args = append(cmd.Args, "-C", FishInitCommand)
-			}
-		}
+	}
+	// Only the terminal's shell, which the vte starts on a controlling
+	// terminal, is driven by the vte; the shells that run tasks and
+	// tools must not load Rune's bindings.
+	if procattr.ControlsTerminal(cmd.SysProcAttr) {
+		cmd = p.withShellRC(cmd)
 	}
 	// Unlike file paths, the executable comes from configuration such as
 	// an extension entrypoint of "$RUNE_DATADIR/bin/x", and is expanded
@@ -546,6 +537,26 @@ func (p *fileScheme) StartCommand(ctx context.Context, cmd workspaceapi.Cmd) (
 	p.cmds.Store(pid, struct{}{})
 
 	return pid, nil
+}
+
+// withShellRC binds the keys that the vte sends to a zsh, bash or fish cmd,
+// whether the shell came from $SHELL or terminal.shell.
+func (p *fileScheme) withShellRC(cmd workspaceapi.Cmd) workspaceapi.Cmd {
+	switch filepath.Base(cmd.Path) {
+	case "zsh":
+		if p.shellRCDir != "" {
+			cmd.Env = append(cmd.Env, "ZDOTDIR="+p.shellRCDir)
+		}
+	case "bash":
+		if p.shellRCDir != "" {
+			cmd.Env = append(cmd.Env, "INPUTRC="+filepath.Join(p.shellRCDir, "inputrc"))
+		}
+	case "fish":
+		// ahead of the configured args, where a script operand would take
+		// every argument after it as its own
+		cmd.Args = append([]string{"-C", FishInitCommand}, cmd.Args...)
+	}
+	return cmd
 }
 
 func (p *fileScheme) Chroot(path string) (schemeapi.Scheme, error) {

@@ -163,7 +163,7 @@ func WithScheme(scheme string, fn schemeapi.SchemeFunc) Option {
 	}
 }
 
-// WithShellRCDir makes login shells in file workspaces load the dotfiles
+// WithShellRCDir makes terminal shells in file workspaces load the dotfiles
 // in dir, as installed by workspace.InstallShellRC. The dotfiles bind the
 // keys that terminal modal mode sends to the shell; without this option,
 // shells load only the user's own dotfiles.

@@ -342,10 +342,12 @@ func (e *Handler) Handle(ev term.Event) (exit, handled bool) {
 					return
 				}
 				msg := "You pressed <esc>, which would enable modal (vi) mode, " +
-					"but it cannot be enabled because the shell's " +
-					"audible bell is currently unavailable. " +
-					"Ensure that the shell's audible bell is configured and " +
-					"working correctly. You can test it in your terminal with `printf '\\a'`."
+					"but the shell did not ring the bell that enables it. " +
+					"Rune sets this up for zsh, bash and fish when they are " +
+					"the terminal's shell, taken from terminal.shell in your config or else $SHELL. " +
+					"To use another of them, set terminal.shell to it and open a new " +
+					"terminal rather than starting it from this one. Otherwise, check " +
+					"that your shell config does not turn off the bell or rebind ctrl-g."
 				e.log(log.WarnLevel, "%s: %v", msg, err)
 				if _, err := e.notifications.NotifyOnce(browserapi.LevelWarn, "%s", msg); err != nil {
 					e.log(log.ErrorLevel, "notify: %v", err)

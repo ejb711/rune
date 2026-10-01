@@ -21,7 +21,6 @@ package vte
 import (
 	"context"
 	"os"
-	"path"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -39,7 +38,6 @@ import (
 	"unstable.build/rune/internal/term/vte/vtescreen"
 	"unstable.build/rune/internal/term/vte/vtetest"
 	"unstable.build/rune/internal/text"
-	"unstable.build/rune/internal/workspace"
 )
 
 func TestHandlerViIntegration(t *testing.T) {
@@ -608,26 +606,16 @@ $ ech▐              `},
 }
 
 func TestZshEdgeCases(t *testing.T) {
-	t.Parallel()
 	// only run this if zsh is present in system running test harness
 	zshPath, err := find.Executable("zsh")
 	if err != nil {
 		t.SkipNow()
 	}
 
-	tempDir, err := os.MkdirTemp("", "")
-	require.NoError(t, err)
-
-	f, err := os.Create(path.Join(tempDir, ".zshrc"))
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = f.Close()
-		_ = os.Remove(f.Name())
-	})
-
-	_, err = f.Write([]byte(`
-bindkey '^a' beginning-of-line
-bindkey '^g' beep
+	// zsh started as terminal.shell loads Rune's dotfiles, which source
+	// the ones in $HOME
+	home := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".zshrc"), []byte(`
 setopt COMBINING_CHARS
 PS1='$ '
 autoload -U compinit && compinit -u
@@ -638,10 +626,8 @@ zstyle ':completion:*' menu select
 xfoo() { :; }
 _xfoo() { compadd -- alpha bravo charlie delta }
 compdef _xfoo xfoo
-`))
-	require.NoError(t, err)
-
-	os.Setenv("ZDOTDIR", tempDir)
+`), 0o644))
+	t.Setenv("HOME", home)
 
 	t.Run("insert mode edit wrap-around", func(t *testing.T) {
 		cases := []vtetest.Case{
@@ -731,14 +717,15 @@ aaaaaa
 // sending ^A^G and waiting for the bell; without Rune's inputrc, bash's
 // vi-insert keymap self-inserts both bytes instead. Appending then needs an
 // end-of-line command, because readline clamps forward-char to the last
-// character under vi mode. bash starts as the default login shell, so the
-// test covers how the inputrc reaches bash and not only what it binds.
+// character under vi mode. bash starts as the login shell or as
+// terminal.shell, so the test covers how the inputrc reaches bash and not
+// only what it binds.
 func TestBashViModeEdgeCases(t *testing.T) {
 	bashPath, err := find.Executable("bash")
 	if err != nil {
 		t.Skip("bash not found in PATH")
 	}
-	for _, tc := range []struct {
+	for _, rc := range []struct {
 		name    string
 		bashrc  string
 		inputrc string
@@ -746,23 +733,80 @@ func TestBashViModeEdgeCases(t *testing.T) {
 		{name: "set -o vi in bashrc", bashrc: "set -o vi\n"},
 		{name: "editing-mode vi in inputrc", inputrc: "set editing-mode vi\n"},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
+		for _, sh := range []struct {
+			name           string
+			loginShell     string
+			commandAndArgs []string
+		}{
+			{"SHELL", bashPath, nil},
+			// SHELL is not bash so that only terminal.shell can start it
+			{"terminal.shell", "/bin/sh", []string{bashPath}},
+		} {
+			t.Run(rc.name+"/"+sh.name, func(t *testing.T) {
+				home := t.TempDir()
+				require.NoError(t, os.WriteFile(filepath.Join(home, ".bash_profile"),
+					[]byte(". ~/.bashrc\n"), 0o644))
+				require.NoError(t, os.WriteFile(filepath.Join(home, ".bashrc"),
+					[]byte(rc.bashrc+"PS1='$ '\n"), 0o644))
+				if rc.inputrc != "" {
+					require.NoError(t, os.WriteFile(filepath.Join(home, ".inputrc"),
+						[]byte(rc.inputrc), 0o644))
+				}
+				t.Setenv("HOME", home)
+				t.Setenv("SHELL", sh.loginShell)
+				// an inherited INPUTRC would mask a missing export
+				t.Setenv("INPUTRC", "")
+				// bash 3.2 as shipped on macOS prints a zsh-migration banner on
+				// every interactive startup, which would scroll the screen away.
+				t.Setenv("BASH_SILENCE_DEPRECATION_WARNING", "1")
+
+				cases := []vtetest.Case{
+					{"echo blaaa<0Cecho hi", `$ echo hi▐          
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    `},
+				}
+				cfg := DefaultConfig()
+				cfg.Modal = true
+				testSequenceCommand(t, cfg, defaultWaitForIdleVte, sh.commandAndArgs, cases)
+			})
+		}
+	}
+}
+
+// TestZshViModeEdgeCases checks that modal mode engages when the user's zsh
+// uses the vi keymap, whose viins self-inserts ^A and ^G and leaves the
+// delete key unbound, so ESC [ 3 ~ turns into vicmd's case swap. zsh starts
+// as the login shell or as terminal.shell, so the test covers how the
+// dotfiles reach zsh and not only what they bind.
+func TestZshViModeEdgeCases(t *testing.T) {
+	zshPath, err := find.Executable("zsh")
+	if err != nil {
+		t.Skip("zsh not found in PATH")
+	}
+	for _, sh := range []struct {
+		name           string
+		loginShell     string
+		commandAndArgs []string
+	}{
+		{"SHELL", zshPath, nil},
+		// SHELL is not zsh so that only terminal.shell can start it
+		{"terminal.shell", "/bin/sh", []string{zshPath}},
+	} {
+		t.Run(sh.name, func(t *testing.T) {
 			home := t.TempDir()
-			require.NoError(t, os.WriteFile(filepath.Join(home, ".bash_profile"),
-				[]byte(". ~/.bashrc\n"), 0o644))
-			require.NoError(t, os.WriteFile(filepath.Join(home, ".bashrc"),
-				[]byte(tc.bashrc+"PS1='$ '\n"), 0o644))
-			if tc.inputrc != "" {
-				require.NoError(t, os.WriteFile(filepath.Join(home, ".inputrc"),
-					[]byte(tc.inputrc), 0o644))
-			}
+			require.NoError(t, os.WriteFile(filepath.Join(home, ".zshrc"),
+				[]byte("bindkey -v\nPS1='$ '\n"), 0o644))
 			t.Setenv("HOME", home)
-			t.Setenv("SHELL", bashPath)
-			// an inherited INPUTRC would mask a missing export
-			t.Setenv("INPUTRC", "")
-			// bash 3.2 as shipped on macOS prints a zsh-migration banner on
-			// every interactive startup, which would scroll the screen away.
-			t.Setenv("BASH_SILENCE_DEPRECATION_WARNING", "1")
+			t.Setenv("SHELL", sh.loginShell)
+			// an inherited ZDOTDIR would mask a missing export
+			t.Setenv("ZDOTDIR", "")
 
 			cases := []vtetest.Case{
 				{"echo blaaa<0Cecho hi", `$ echo hi▐          
@@ -778,61 +822,47 @@ func TestBashViModeEdgeCases(t *testing.T) {
 			}
 			cfg := DefaultConfig()
 			cfg.Modal = true
-			testSequenceCommand(t, cfg, defaultWaitForIdleVte, nil, cases)
+			testSequenceCommand(t, cfg, defaultWaitForIdleVte, sh.commandAndArgs, cases)
 		})
 	}
 }
 
-// TestZshViModeEdgeCases checks that modal mode engages when the user's zsh
-// uses the vi keymap, whose viins self-inserts ^A and ^G and leaves the
-// delete key unbound, so ESC [ 3 ~ turns into vicmd's case swap. zsh starts
-// as the default login shell, so the test covers how the dotfiles reach zsh
-// and not only what they bind.
-func TestZshViModeEdgeCases(t *testing.T) {
-	zshPath, err := find.Executable("zsh")
-	if err != nil {
-		t.Skip("zsh not found in PATH")
-	}
-	home := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(home, ".zshrc"),
-		[]byte("bindkey -v\nPS1='$ '\n"), 0o644))
-	t.Setenv("HOME", home)
-	t.Setenv("SHELL", zshPath)
-	// an inherited ZDOTDIR would mask a missing export
-	t.Setenv("ZDOTDIR", "")
-
-	cases := []vtetest.Case{
-		{"echo blaaa<0Cecho hi", `$ echo hi▐          
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    `},
-	}
-	cfg := DefaultConfig()
-	cfg.Modal = true
-	testSequenceCommand(t, cfg, defaultWaitForIdleVte, nil, cases)
-}
-
-// TestFishEdgeCases checks that modal mode engages under fish with the
-// bindings the file scheme passes through --init-command.
+// TestFishEdgeCases checks that modal mode engages under fish started as the
+// login shell or as terminal.shell. fish binds neither ^A nor ^G in insert
+// mode, so the vte's ^A^G handshake only rings the bell with the bindings
+// the file scheme passes through --init-command.
 func TestFishEdgeCases(t *testing.T) {
 	fishPath, err := find.Executable("fish")
 	if err != nil {
 		t.SkipNow()
 	}
-	// CommandAndArgs is joined and re-split like a shell command line, so
-	// the init command goes through a file sourced from one quoted argument.
-	init := filepath.Join(t.TempDir(), "init.fish")
-	require.NoError(t, os.WriteFile(init, []byte(workspace.FishInitCommand+
-		"\nset -g fish_greeting\nfunction fish_prompt; printf '$ '; end\n"), 0o644))
+	for _, keys := range []struct{ name, configFish string }{
+		{"default key bindings", ""},
+		{"vi key bindings", "fish_vi_key_bindings\n"},
+	} {
+		for _, sh := range []struct {
+			name           string
+			loginShell     string
+			commandAndArgs []string
+		}{
+			{"SHELL", fishPath, nil},
+			// SHELL is not fish so that only terminal.shell can start it
+			{"terminal.shell", "/bin/sh", []string{fishPath}},
+		} {
+			t.Run(keys.name+"/"+sh.name, func(t *testing.T) {
+				home := t.TempDir()
+				configDir := filepath.Join(home, ".config")
+				require.NoError(t, os.MkdirAll(filepath.Join(configDir, "fish"), 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(configDir, "fish", "config.fish"),
+					[]byte("set -g fish_greeting\nfunction fish_prompt; printf '$ '; end\n"+
+						"function fish_mode_prompt; end\n"+keys.configFish), 0o644))
+				t.Setenv("HOME", home)
+				t.Setenv("XDG_CONFIG_HOME", configDir)
+				t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+				t.Setenv("SHELL", sh.loginShell)
 
-	cases := []vtetest.Case{
-		{"echo blaaa<0Cecho hi", `$ echo hi▐          
+				cases := []vtetest.Case{
+					{"echo blaaa<0Cecho hi", `$ echo hi▐          
                     
                     
                     
@@ -842,11 +872,13 @@ func TestFishEdgeCases(t *testing.T) {
                     
                     
                     `},
+				}
+				cfg := DefaultConfig()
+				cfg.Modal = true
+				testSequenceCommand(t, cfg, defaultWaitForIdleVte, sh.commandAndArgs, cases)
+			})
+		}
 	}
-	cfg := DefaultConfig()
-	cfg.Modal = true
-	testSequenceCommand(t, cfg, defaultWaitForIdleVte,
-		[]string{fishPath, "--no-config", "--private", "-i", "-C", "'source " + init + "'"}, cases)
 }
 
 func TestViEditUnit(t *testing.T) {

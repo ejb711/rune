@@ -466,58 +466,19 @@ func TestStartCommand(t *testing.T) {
 				"Cmds produce a usable login shell")
 	})
 
-	t.Run("empty Cmd.Path exports the dotfile directory to zsh and bash", func(t *testing.T) {
-		for _, tc := range []struct{ shell, envVar, want string }{
-			{"zsh", "ZDOTDIR", "/rune/shellrc"},
-			{"bash", "INPUTRC", "/rune/shellrc/inputrc"},
-		} {
-			t.Run(tc.shell, func(t *testing.T) {
+	// The terminal's shell is covered by the vte's e2e tests, since it
+	// needs a controlling terminal.
+	t.Run("a login shell without a controlling terminal loads no bindings", func(t *testing.T) {
+		for _, shell := range []string{"zsh", "bash", "fish"} {
+			t.Run(shell, func(t *testing.T) {
 				s, dir := newShellFileScheme(t, "/rune/shellrc")
-				t.Setenv(tc.envVar, "")
-
-				got := runShellCommand(t, s, dir, tc.shell,
-					"#!/bin/sh\nprintf '%s' \"$"+tc.envVar+"\"\n", workspaceapi.Cmd{})
-				assert.Equal(t, tc.want, got)
-			})
-		}
-	})
-
-	t.Run("empty Cmd.Path exports no dotfiles to another shell or without a directory", func(t *testing.T) {
-		for _, tc := range []struct {
-			name, shell, shellRCDir string
-		}{
-			{"sh", "sh", "/rune/shellrc"},
-			{"zsh without a directory", "zsh", ""},
-			{"bash without a directory", "bash", ""},
-		} {
-			t.Run(tc.name, func(t *testing.T) {
-				s, dir := newShellFileScheme(t, tc.shellRCDir)
 				t.Setenv("ZDOTDIR", "")
 				t.Setenv("INPUTRC", "")
 
-				got := runShellCommand(t, s, dir, tc.shell,
-					"#!/bin/sh\nprintf '%s %s' \"${ZDOTDIR:-unset}\" \"${INPUTRC:-unset}\"\n",
-					workspaceapi.Cmd{})
-				assert.Equal(t, "unset unset", got)
-			})
-		}
-	})
-
-	t.Run("empty Cmd.Path with fish adds the init command to default args only", func(t *testing.T) {
-		for _, tc := range []struct {
-			name string
-			args []string
-			want string
-		}{
-			{"default args", nil, "--login\n-i\n-C\n" + FishInitCommand + "\n"},
-			{"explicit args", []string{"-c", "true"}, "-c\ntrue\n"},
-		} {
-			t.Run(tc.name, func(t *testing.T) {
-				s, dir := newShellFileScheme(t, "")
-				got := runShellCommand(t, s, dir, "fish",
-					"#!/bin/sh\nprintf '%s\\n' \"$@\"\n",
-					workspaceapi.Cmd{Args: tc.args})
-				assert.Equal(t, tc.want, got)
+				got := runShellCommand(t, s, dir, shell,
+					"#!/bin/sh\nprintf '%s %s %s' \"${ZDOTDIR:-unset}\" \"${INPUTRC:-unset}\" \"$*\"\n",
+					workspaceapi.Cmd{SysProcAttr: &syscall.SysProcAttr{Setsid: true}})
+				assert.Equal(t, "unset unset --login -i", got)
 			})
 		}
 	})
@@ -937,6 +898,63 @@ func TestReadFileClosesFile(t *testing.T) {
 	}
 }
 
+func TestFileSchemeWithShellRC(t *testing.T) {
+	fishInit := []string{"-C", FishInitCommand}
+	for _, tc := range []struct {
+		name       string
+		shellRCDir string
+		cmd        workspaceapi.Cmd
+		want       workspaceapi.Cmd
+	}{
+		{
+			name: "zsh", shellRCDir: "/rune/shellrc",
+			cmd:  workspaceapi.Cmd{Path: "/bin/zsh", Args: []string{"-l"}},
+			want: workspaceapi.Cmd{Path: "/bin/zsh", Args: []string{"-l"}, Env: []string{"ZDOTDIR=/rune/shellrc"}},
+		},
+		{
+			name: "bash", shellRCDir: "/rune/shellrc",
+			cmd:  workspaceapi.Cmd{Path: "bash"},
+			want: workspaceapi.Cmd{Path: "bash", Env: []string{"INPUTRC=/rune/shellrc/inputrc"}},
+		},
+		{
+			name: "fish", shellRCDir: "/rune/shellrc",
+			cmd:  workspaceapi.Cmd{Path: "fish"},
+			want: workspaceapi.Cmd{Path: "fish", Args: fishInit},
+		},
+		{
+			name: "fish with args", shellRCDir: "/rune/shellrc",
+			cmd:  workspaceapi.Cmd{Path: "/usr/bin/fish", Args: []string{"--login", "-i"}},
+			want: workspaceapi.Cmd{Path: "/usr/bin/fish", Args: append(fishInit, "--login", "-i")},
+		},
+		{
+			// fish's bindings don't come from the directory
+			name: "fish without a directory",
+			cmd:  workspaceapi.Cmd{Path: "fish"},
+			want: workspaceapi.Cmd{Path: "fish", Args: fishInit},
+		},
+		{
+			name: "zsh without a directory",
+			cmd:  workspaceapi.Cmd{Path: "zsh"},
+			want: workspaceapi.Cmd{Path: "zsh"},
+		},
+		{
+			name: "bash without a directory",
+			cmd:  workspaceapi.Cmd{Path: "bash"},
+			want: workspaceapi.Cmd{Path: "bash"},
+		},
+		{
+			name: "another shell", shellRCDir: "/rune/shellrc",
+			cmd:  workspaceapi.Cmd{Path: "/bin/sh", Args: []string{"-i"}},
+			want: workspaceapi.Cmd{Path: "/bin/sh", Args: []string{"-i"}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &fileScheme{shellRCDir: tc.shellRCDir}
+			assert.Equal(t, tc.want, p.withShellRC(tc.cmd))
+		})
+	}
+}
+
 func TestInstallShellRC(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -1098,7 +1116,7 @@ func TestFileSchemeStartCommandScrubsGitHookEnv(t *testing.T) {
 		"caller-provided cmd.Env must still pass through")
 }
 
-// newShellFileScheme returns a fileScheme rooted at a temp dir whose login
+// newShellFileScheme returns a fileScheme rooted at a temp dir whose terminal
 // shells load the dotfiles in shellRCDir.
 func newShellFileScheme(t *testing.T, shellRCDir string) (*fileScheme, string) {
 	t.Helper()
