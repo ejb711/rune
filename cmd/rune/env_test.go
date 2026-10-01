@@ -569,7 +569,7 @@ func newConfiguredBootstrapForEnvTest(
 	require.NoError(t, err)
 
 	b, err := newBootstrapHandler(
-		dataDir, configPath, "" /* workspace */, "" /* zdotDir */, nil, /* filenames */
+		dataDir, configPath, "" /* workspace */, "" /* shellRCDir */, nil, /* filenames */
 		nil /* launchCmd */, ide.FuncExtensionsRunner(testE2EExtensionsRunner),
 		mu, publishEvent, nil /* cellPixelSize */, nil, /* setAltModifier */
 		func(*url.URL) error { return nil }, clipboard.NewInMemory(),

@@ -171,12 +171,6 @@ rune.app/
       hicolor/
         512x512/apps/rune.png
         1024x1024/apps/rune.png
-    zdot/
-      .zlogin         # zsh dot files for integrated terminal
-      .zprofile
-      .zshenv
-      .zshrc
-      inputrc         # readline bindings for bash in the integrated terminal
 ```
 
 ## System library requirements

@@ -64,7 +64,7 @@ type bootstrapHandler struct {
 	storage           storageapi.Service
 	configPath        string
 	workspace         string
-	zdotDir           string
+	shellRCDir        string
 	filenames         []string
 	launchCmd         []string
 	runner            ide.ExtensionsRunner
@@ -109,7 +109,7 @@ type bootstrapHandler struct {
 }
 
 func newBootstrapHandler(
-	dataDir, configPath, workspace, zdotDir string,
+	dataDir, configPath, workspace, shellRCDir string,
 	filenames, launchCmd []string,
 	runner ide.ExtensionsRunner,
 	mu *sync.Mutex,
@@ -127,7 +127,7 @@ func newBootstrapHandler(
 		storage:          newRuneStorage(dataDir),
 		configPath:       configPath,
 		workspace:        workspace,
-		zdotDir:          zdotDir,
+		shellRCDir:       shellRCDir,
 		filenames:        filenames,
 		launchCmd:        launchCmd,
 		runner:           runner,
@@ -146,7 +146,7 @@ func newBootstrapHandler(
 
 	if isBootstrapped(dataDir) {
 		client, releaseManager := newAPIClient(bh.storage, installBackupDir, rootCfg)
-		bh.network = newNetwork(rootCfg, dataDir, newNetworkGate(client))
+		bh.network = newNetwork(rootCfg, dataDir, shellRCDir, newNetworkGate(client))
 		bh.network.startAutoJoin()
 		realIDE, err := bh.buildConfiguredIDE(client, releaseManager, false)
 		if err != nil {
@@ -197,7 +197,7 @@ func (b *bootstrapHandler) buildPreIDE() (*ide.IDE, error) {
 		ide.WithPublishEvent(b.publishEvent),
 		ide.WithScheduleNextTick(b.scheduleNextTick),
 		ide.WithCellPixelSize(b.cellPixelSize),
-		ide.WithZdotDir(b.zdotDir),
+		ide.WithShellRCDir(b.shellRCDir),
 		ide.WithTabsClickCallback(b.handleTabsClick),
 	}
 	preIDE, err := ide.New("", b.configPath, b.dataDir, b.trust, b.storage, opts...)
@@ -234,7 +234,7 @@ func (b *bootstrapHandler) buildConfiguredIDE(
 		ide.WithPublishEvent(b.publishEvent),
 		ide.WithScheduleNextTick(b.scheduleNextTick),
 		ide.WithCellPixelSize(b.cellPixelSize),
-		ide.WithZdotDir(b.zdotDir),
+		ide.WithShellRCDir(b.shellRCDir),
 		ide.WithScheme(docsScheme, newDocsSchemeFunc(b.configPath)),
 		ide.WithTabsClickCallback(b.handleTabsClick),
 		ide.WithPackageConfigMergeHook(b.guiEnvLiveApplyHook),
@@ -571,7 +571,7 @@ func (b *bootstrapHandler) performSwap() error {
 	client, releaseManager := newAPIClient(b.storage, b.installBackupDir, rootCfg)
 	// The network gates on the account, so it exists only from the
 	// moment the API client that vouches for it does.
-	b.network = newNetwork(b.rootCfg, b.dataDir, newNetworkGate(client))
+	b.network = newNetwork(b.rootCfg, b.dataDir, b.shellRCDir, newNetworkGate(client))
 	b.network.startAutoJoin()
 	realIDE, err := b.buildConfiguredIDE(client, releaseManager, true)
 	if err != nil {

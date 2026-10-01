@@ -8771,7 +8771,7 @@ func swapDirIDEConfig(t *testing.T, enabled bool) ideConfig {
 	var cfg ideConfig
 	require.NoError(t, loadConfig(&cfg, f.Name(), browser.NopWallpaper(),
 		DefaultConfig{src: "config = {}"},
-		term.RingBell, term.ScheduleNextTick, ""))
+		term.RingBell, term.ScheduleNextTick))
 	return cfg
 }
 

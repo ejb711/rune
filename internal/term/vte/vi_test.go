@@ -726,27 +726,46 @@ aaaaaa
 	})
 }
 
-// TestBashViModeEdgeCases checks that modal mode engages under bash in vi
-// mode. The vte synchronizes with the shell by sending ^A^G and waiting for
-// the bell; without Rune's inputrc, bash's vi-insert keymap self-inserts both
-// bytes instead.
+// TestBashViModeEdgeCases checks that modal mode engages when the user's
+// bash runs readline in vi mode. The vte synchronizes with the shell by
+// sending ^A^G and waiting for the bell; without Rune's inputrc, bash's
+// vi-insert keymap self-inserts both bytes instead. Appending then needs an
+// end-of-line command, because readline clamps forward-char to the last
+// character under vi mode. bash starts as the default login shell, so the
+// test covers how the inputrc reaches bash and not only what it binds.
 func TestBashViModeEdgeCases(t *testing.T) {
 	bashPath, err := find.Executable("bash")
 	if err != nil {
-		t.SkipNow()
+		t.Skip("bash not found in PATH")
 	}
-	inputrc, err := filepath.Abs("../../../extra/osx/Rune.app/Contents/Resources/zdot/inputrc")
-	require.NoError(t, err)
-	t.Setenv("INPUTRC", inputrc)
-	// bash 3.2 as shipped on macOS prints a zsh-migration banner on every
-	// interactive startup, which would scroll the screen away.
-	t.Setenv("BASH_SILENCE_DEPRECATION_WARNING", "1")
+	for _, tc := range []struct {
+		name    string
+		bashrc  string
+		inputrc string
+	}{
+		{name: "set -o vi in bashrc", bashrc: "set -o vi\n"},
+		{name: "editing-mode vi in inputrc", inputrc: "set editing-mode vi\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(home, ".bash_profile"),
+				[]byte(". ~/.bashrc\n"), 0o644))
+			require.NoError(t, os.WriteFile(filepath.Join(home, ".bashrc"),
+				[]byte(tc.bashrc+"PS1='$ '\n"), 0o644))
+			if tc.inputrc != "" {
+				require.NoError(t, os.WriteFile(filepath.Join(home, ".inputrc"),
+					[]byte(tc.inputrc), 0o644))
+			}
+			t.Setenv("HOME", home)
+			t.Setenv("SHELL", bashPath)
+			// an inherited INPUTRC would mask a missing export
+			t.Setenv("INPUTRC", "")
+			// bash 3.2 as shipped on macOS prints a zsh-migration banner on
+			// every interactive startup, which would scroll the screen away.
+			t.Setenv("BASH_SILENCE_DEPRECATION_WARNING", "1")
 
-	rc := filepath.Join(t.TempDir(), "bashrc")
-	require.NoError(t, os.WriteFile(rc, []byte("set -o vi\nPS1='$ '\n"), 0o644))
-
-	cases := []vtetest.Case{
-		{"echo blaaa<0Cecho hi", `$ echo hi▐          
+			cases := []vtetest.Case{
+				{"echo blaaa<0Cecho hi", `$ echo hi▐          
                     
                     
                     
@@ -756,11 +775,12 @@ func TestBashViModeEdgeCases(t *testing.T) {
                     
                     
                     `},
+			}
+			cfg := DefaultConfig()
+			cfg.Modal = true
+			testSequenceCommand(t, cfg, defaultWaitForIdleVte, nil, cases)
+		})
 	}
-	cfg := DefaultConfig()
-	cfg.Modal = true
-	testSequenceCommand(t, cfg, defaultWaitForIdleVte,
-		[]string{bashPath, "--noprofile", "--rcfile", rc, "-i"}, cases)
 }
 
 // TestFishEdgeCases checks that modal mode engages under fish with the

@@ -466,6 +466,57 @@ func TestTutorialsSeeTheConfiguredConfigPath(t *testing.T) {
 	assert.Equal(t, configPath, newTutorialsConfig(i).configPath)
 }
 
+// TestFileSchemeShellRC pins that login shells in file workspaces load
+// Rune's dotfiles only when the host injects them, so an IDE built by a
+// test never writes into its data dir behind the test's back.
+func TestFileSchemeShellRC(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts []Option
+		want string
+	}{
+		{"default", nil, "unset"},
+		{"WithShellRCDir", []Option{WithShellRCDir("/rune/shellrc")}, "/rune/shellrc"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			zsh := filepath.Join(dir, "zsh")
+			require.NoError(t, os.WriteFile(zsh,
+				[]byte("#!/bin/sh\nprintf '%s' \"${ZDOTDIR:-unset}\"\n"), 0o755))
+			t.Setenv("SHELL", zsh)
+			t.Setenv("ZDOTDIR", "")
+			configPath := filepath.Join(dir, "rune.yaml")
+			require.NoError(t, os.WriteFile(configPath, []byte(
+				"editor:\n  mode: vim\nterminal:\n  initial_reservoir: 0\n"), 0o644))
+
+			i, err := New("", configPath, dir, pkgtrust.NewStore(dir, nil), newTestStorage(t, dir),
+				append([]Option{
+					WithPublishEvent(nopPublishEvent),
+					WithLocker(new(sync.Mutex)),
+					WithScheduleNextTick(func(fn func()) bool { fn(); return true }),
+				}, tc.opts...)...)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = i.Close() })
+
+			uri, err := workspaceapi.CurrentUserHostURI(dir)
+			require.NoError(t, err)
+			newScheme, err := i.workspaceManager.Scheme(uri)
+			require.NoError(t, err)
+			scheme, err := newScheme(t.Context(), config.NopConfig(), uri)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = scheme.Close() })
+
+			var out bytes.Buffer
+			ch := make(chan error, 1)
+			_, err = scheme.StartCommand(t.Context(), workspaceapi.Cmd{
+				Stdout: &out, Watcher: workspaceapi.ChanProcessWatcher(ch)})
+			require.NoError(t, err)
+			require.NoError(t, <-ch)
+			assert.Equal(t, tc.want, out.String())
+		})
+	}
+}
+
 func TestSignedPackageTrustIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("starts a real workspace extension process")

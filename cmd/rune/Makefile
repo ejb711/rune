@@ -375,7 +375,6 @@ linux-cross-compile:
 #   rune.app/lib/*.so.*            (transitive NEEDED libs, rpath=$ORIGIN/../lib)
 #   rune.app/share/applications/rune.desktop
 #   rune.app/share/icons/hicolor/{512x512,1024x1024}/apps/rune.png
-#   rune.app/share/zdot/{.z*,inputrc}
 # The bundling loop intentionally skips the glibc core, the C++ runtime
 # (libstdc++/libgcc_s/libgomp), the OpenGL/GLX/EGL loader, and the X11/XCB
 # client libs: those must come from the host. They are all forward-compatible,
@@ -431,16 +430,10 @@ make-release-linux:
 	rm -f "$$LIB/.queue" "$$LIB/.next"
 	@mkdir -p $(RUNE_LINUX_OUTPUT_DIR)/rune.app/share/applications \
 		$(RUNE_LINUX_OUTPUT_DIR)/rune.app/share/icons/hicolor/512x512/apps \
-		$(RUNE_LINUX_OUTPUT_DIR)/rune.app/share/icons/hicolor/1024x1024/apps \
-		$(RUNE_LINUX_OUTPUT_DIR)/rune.app/share/zdot
+		$(RUNE_LINUX_OUTPUT_DIR)/rune.app/share/icons/hicolor/1024x1024/apps
 	@cp $(ROOT_DIR)/deploy/rune-linux/rune.desktop $(RUNE_LINUX_OUTPUT_DIR)/rune.app/share/applications/rune.desktop
 	@cp $(ROOT_DIR)/extra/icon.iconset/icon_512x512.png $(RUNE_LINUX_OUTPUT_DIR)/rune.app/share/icons/hicolor/512x512/apps/rune.png
 	@cp $(ROOT_DIR)/extra/icon.iconset/icon_512x512@2x.png $(RUNE_LINUX_OUTPUT_DIR)/rune.app/share/icons/hicolor/1024x1024/apps/rune.png
-	@cp $(ROOT_DIR)/extra/osx/Rune.app/Contents/Resources/zdot/.zlogin $(RUNE_LINUX_OUTPUT_DIR)/rune.app/share/zdot/
-	@cp $(ROOT_DIR)/extra/osx/Rune.app/Contents/Resources/zdot/.zprofile $(RUNE_LINUX_OUTPUT_DIR)/rune.app/share/zdot/
-	@cp $(ROOT_DIR)/extra/osx/Rune.app/Contents/Resources/zdot/.zshenv $(RUNE_LINUX_OUTPUT_DIR)/rune.app/share/zdot/
-	@cp $(ROOT_DIR)/extra/osx/Rune.app/Contents/Resources/zdot/.zshrc $(RUNE_LINUX_OUTPUT_DIR)/rune.app/share/zdot/
-	@cp $(ROOT_DIR)/extra/osx/Rune.app/Contents/Resources/zdot/inputrc $(RUNE_LINUX_OUTPUT_DIR)/rune.app/share/zdot/
 	@cp $(ROOT_DIR)/extra/osx/Rune.app/Contents/Resources/LICENSES $(RUNE_LINUX_OUTPUT_DIR)/rune.app/share/LICENSES
 	@cd $(RUNE_LINUX_OUTPUT_DIR) && tar --format=ustar -czf $(RUNE_LINUX_RELEASE_TAR) rune.app
 

@@ -607,7 +607,9 @@ func testSequenceCommand(
 	uri, err := workspaceapi.CurrentUserHostURI(temp)
 	require.NoError(t, err)
 
-	scheme, err := workspace.NewFileScheme(ctx, config.NopConfig(), uri)
+	shellRCDir, err := workspace.InstallShellRC(t.TempDir())
+	require.NoError(t, err)
+	scheme, err := workspace.NewFileSchemeFunc(shellRCDir)(ctx, config.NopConfig(), uri)
 	require.NoError(t, err)
 
 	ch := make(chan struct{}, 50 /* big enough for the max length sequence of events */)

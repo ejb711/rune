@@ -49,7 +49,7 @@ type headlessClient interface {
 // operator would otherwise read out of the editor — the sign-in code, the
 // account, the node's mesh status — goes to stdout, and the editor log
 // is teed there too so the process is usable under a service manager.
-func runHeadless(ctx context.Context) int {
+func runHeadless(ctx context.Context, shellRCDir string, shellRCErr error) int {
 	rootCfg, err := ide.Config(*flagConfigPath, runeDefaultConfig())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "load config: %s\n", err)
@@ -62,6 +62,10 @@ func runHeadless(ctx context.Context) int {
 		return 1
 	}
 	defer closeLog()
+	// No UI to notify: the log is teed to the operator's stdout.
+	if shellRCErr != nil {
+		log.Warn(shellRCErr)
+	}
 
 	netCfg, err := networkConfig(rootCfg, *flagDataPath)
 	if err != nil {
@@ -87,7 +91,7 @@ func runHeadless(ctx context.Context) int {
 		return 1
 	}
 
-	net := newNetwork(rootCfg, *flagDataPath, newNetworkGate(client))
+	net := newNetwork(rootCfg, *flagDataPath, shellRCDir, newNetworkGate(client))
 	defer func() {
 		_ = net.Close()
 	}()
